@@ -5,6 +5,47 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 
 ---
 
+## [3.3.5] — 2026-09-03
+
+### Added
+- **OS-level session-expiry enforcement.** The native VPN service now enforces the
+  server deadline with both a monotonic in-process handler and `AlarmManager`, so
+  expiry does not depend on the Flutter UI process staying alive.
+- Only the non-secret runtime generation token and absolute expiry timestamp are
+  persisted app-private for the OS alarm. Per-session VLESS UUID/SOCKS credentials
+  remain memory-only; if Android cannot redeliver the original start intent, the
+  runtime fails closed instead of reconstructing a tunnel from secrets on disk.
+- A successful support reward now requests an immediate control-plane refresh so the
+  extended deadline is pushed to the native service without waiting for the next poll.
+
+### Fixed
+- **Session clock reattach race.** `SessionTimer` is eager and evaluates the current
+  VPN state once after construction, so a UI process attaching to an already-live
+  tunnel no longer leaves the countdown at `00:00:00`.
+- Forced support sync no longer disappears behind an already-running periodic sync;
+  it waits for the active request and then performs a fresh control-plane refresh.
+- VPN permission requests now fail with `NO_ACTIVITY` during Android activity detach
+  instead of dereferencing a null Activity.
+- Receiver cleanup logs lifecycle races instead of silently swallowing them.
+- An early/stale session-expiry alarm no longer leaves an otherwise unused service
+  process running.
+
+### Changed
+- Unknown/obsolete persisted connection-mode labels, including the old `ass`/`auto`
+  values, now fail closed to TUN. Only the explicit current `proxy` value restores
+  SOCKS5 mode.
+- App version is `3.3.5+31`.
+
+### Security
+- Existing AdMob bypass/callback behavior is intentionally unchanged.
+- Build-time mutation of the global Flutter pub cache remains removed; the hardened
+  `flutter_vless_android` 1.1.5 source remains vendored and immutable during builds.
+- Full IPv4/IPv6 TUN routing, fail-closed DNS/TUN setup, authenticated ephemeral
+  loopback SOCKS5, generation-scoped STOP/state handling, production config pinning,
+  dependency verification, R8 gates and updater host allowlists remain in force.
+
+---
+
 ## [3.3.4] — 2026-09-02
 
 ### Added
@@ -41,17 +82,9 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 ## [3.3.3] — 2026-09-01
 
 ### Fixed
-- **The session clock stayed at 00:00:00 on a live tunnel, and the notification
-  countdown froze with it.** `SessionTimer` is built lazily, so when the app reattaches
-  to a tunnel that outlived its UI process, `VpnConnection` had already reported
-  "connected" before the timer existed — and a change listener does not replay events
-  it was not present for. The timer now evaluates the current connection state once at
-  construction instead of waiting for a transition, and is created eagerly alongside
-  `VpnConnection`. Because the timer is what pushes text to the foreground
-  notification, a stopped clock also meant a frozen countdown; both come from this.
-- Resuming the clock no longer requires `adoptedRunningRuntime` or a previous
-  successful sync, both of which are false in a freshly started process. A connected
-  tunnel with a stopped clock is now always treated as something to resume.
+- The session timer now resumes when the Flutter process attaches to a tunnel that was
+  already connected before the timer listener existed. This also prevents the
+  foreground countdown from freezing after UI-process recreation.
 
 ## [3.3.2] — 2026-09-01
 
