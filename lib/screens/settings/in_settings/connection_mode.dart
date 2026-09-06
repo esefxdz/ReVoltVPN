@@ -51,8 +51,14 @@ class _ConnectionModeTileState extends State<ConnectionModeTile> {
       return;
     }
 
-    await ConnectionSettings.setMode(next);
+    final saved = await ConnectionSettings.setMode(next);
     if (!mounted) return;
+    if (!saved) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save connection mode.')),
+      );
+      return;
+    }
 
     setState(() {
       _mode = next;
