@@ -86,15 +86,22 @@ abstract final class LocalSocksTester {
     }
   }
 
-  /// Full user-facing test: authenticated local SOCKS handshake plus an
-  /// outbound TCP CONNECT through the active ReVolt route.
+  /// Full user-facing test: authenticated local SOCKS handshake, an outbound
+  /// CONNECT through the active ReVolt route, and — critically — a real
+  /// request/response exchange over that CONNECT.
+  ///
+  /// The exchange is not optional politeness. Xray answers a SOCKS CONNECT
+  /// before it dials upstream, so the reply code alone says nothing about the
+  /// outbound: it returns success for unroutable addresses and for hostnames
+  /// that can never resolve. Without a round trip this test reports OK while
+  /// the server is down, which is precisely when a user runs it.
   static Future<LocalSocksTestResult> test({
     String host = '127.0.0.1',
     required int port,
     required String username,
     required String password,
     String targetHost = 'example.com',
-    int targetPort = 443,
+    int targetPort = 80,
   }) async {
     const totalTimeout = Duration(seconds: 8);
     final stopwatch = Stopwatch()..start();
@@ -171,6 +178,43 @@ abstract final class LocalSocksTester {
       }
 
       await _consumeAddress(reader, replyHead[3], timeout: remaining());
+
+      // The CONNECT reply above is not evidence of an outbound. Force a round
+      // trip and require the peer's answer before claiming the route works.
+      socket.add(
+        utf8.encode(
+          'GET / HTTP/1.1\r\nHost: $targetHost\r\nConnection: close\r\n\r\n',
+        ),
+      );
+      await socket.flush();
+
+      List<int> banner;
+      try {
+        banner = await reader.readExactly(5, timeout: remaining());
+      } on TimeoutException {
+        return const LocalSocksTestResult(
+          ok: false,
+          latencyMs: null,
+          message: 'Local SOCKS5 is up, but the ReVolt outbound never replied.',
+        );
+      } on SocketException {
+        return const LocalSocksTestResult(
+          ok: false,
+          latencyMs: null,
+          message:
+              'Local SOCKS5 is up, but the ReVolt outbound dropped the connection.',
+        );
+      }
+
+      if (String.fromCharCodes(banner) != 'HTTP/') {
+        return const LocalSocksTestResult(
+          ok: false,
+          latencyMs: null,
+          message:
+              'Local SOCKS5 is up, but the ReVolt outbound returned unexpected data.',
+        );
+      }
+
       stopwatch.stop();
       return LocalSocksTestResult(
         ok: true,

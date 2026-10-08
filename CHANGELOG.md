@@ -5,6 +5,24 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 
 ---
 
+## [3.3.6] — 2026-10-08
+
+### Fixed
+- **VPN service notification icon.** The ongoing notification now uses the
+  bundled `notification_icon` drawable instead of `notification_status_icon`,
+  and the vendored runtime resolves that drawable by name at runtime (falling
+  back to the platform icon only if it is missing), so the foreground-service
+  notification no longer shows the generic Android info icon.
+- **"Test Local SOCKS" no longer claims an outbound it never tested.** Xray
+  answers a SOCKS `CONNECT` before it dials upstream, so trusting the `0x00`
+  reply reported success for unroutable addresses and for hostnames that can
+  never resolve — meaning the test said OK while the server was down, which is
+  exactly when it gets run. It now forces a request/response round trip through
+  the tunnel and reports distinctly when the outbound never replies, drops the
+  connection, or returns unexpected data.
+
+---
+
 ## [3.3.5] — 2026-09-06
 
 ### Added
