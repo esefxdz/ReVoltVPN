@@ -5,6 +5,21 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **Rewarded ads no longer break connecting.** With ads enabled, the ad's
+  server-side-verification nonce and the nonce the connect flow waited for were
+  minted separately, so the client rejected the very session the ad created and
+  failed with "Session not activated". The ad's nonce is now passed through to
+  the connect call, the fake bypass callback is skipped when a real ad was
+  watched, and the client polls longer (~36 s) for Google's callback.
+- **SOCKS5 "Reconnect" re-attaches to the current session** instead of
+  requesting a new one, so repairing a lost proxy no longer needs (or grants)
+  a fresh session.
+
+---
+
 ## [3.3.6] — 2026-10-08
 
 ### Fixed

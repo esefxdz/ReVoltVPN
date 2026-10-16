@@ -81,13 +81,19 @@ class HivemindService {
     _expectedNonce = null;
   }
 
-  static void setExpectedNonce(String nonce) {
-    _expectedNonce = nonce;
-  }
-
+  // Fetches this device's VLESS URL. Three ways in:
+  //   adNonce != null — a real rewarded ad was watched; its SSV custom_data
+  //                     carried this nonce, so wait for a session holding it.
+  //                     Google's SSV callback can lag, so poll longer.
+  //   resume == true  — re-attach to the session already granted (mode-switch
+  //                     reconnect in connection_mode.dart). No ad, no bypass,
+  //                     any nonce accepted — device_id already owns it.
+  //   neither         — ads disabled: mint a nonce and fire the server-gated
+  //                     ADMOB_BYPASS callback (rule 87).
   static Future<String> fetchConfigDirectly({
     void Function(int attempt, int total)? onAttempt,
-    bool skipAdBypass = false,
+    String? adNonce,
+    bool resume = false,
   }) async {
     // Capture the generation before the first await. Otherwise a disconnect
     // that lands while secure storage is resolving the device ID can be lost
@@ -96,15 +102,15 @@ class HivemindService {
     final deviceId = await CryptoService.getDeviceId();
     _throwIfCancelled(callId);
 
-    final nonce = _newNonce();
+    final nonce = resume ? null : (adNonce ?? newNonce());
     _expectedNonce = nonce;
 
-    if (!skipAdBypass) {
-      await _runConfiguredBypass(deviceId, nonce);
+    if (!resume && adNonce == null) {
+      await _runConfiguredBypass(deviceId, nonce!);
       _throwIfCancelled(callId);
     }
 
-    const maxAttempts = 5;
+    final maxAttempts = adNonce != null ? 10 : 5;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       _throwIfCancelled(callId);
       onAttempt?.call(attempt, maxAttempts);
@@ -122,7 +128,9 @@ class HivemindService {
       }
 
       if (attempt < maxAttempts) {
-        await Future.delayed(_pollBackoff[attempt - 1]);
+        await Future.delayed(
+          _pollBackoff[min(attempt - 1, _pollBackoff.length - 1)],
+        );
         _throwIfCancelled(callId);
       }
     }
@@ -142,7 +150,7 @@ class HivemindService {
     }
   }
 
-  static String _newNonce() {
+  static String newNonce() {
     final random = Random.secure();
     final high = random.nextInt(0x7FFFFFFF);
     final low = random.nextInt(0x7FFFFFFF);
@@ -161,9 +169,10 @@ class HivemindService {
     }
   }
 
+  // nonce == null accepts whatever nonce the server holds (resume path).
   static Future<_HivemindSessionConfig?> _fetchActiveSession(
     String deviceId,
-    String nonce,
+    String? nonce,
   ) async {
     final statusUri = _publicUrl('/session/status').replace(
       queryParameters: {'device_id': deviceId},
@@ -175,9 +184,8 @@ class HivemindService {
     if (decoded is! Map<String, dynamic>) return null;
 
     final serverNonce = decoded['nonce'];
-    if (_expectedNonce != nonce ||
-        serverNonce is! String ||
-        serverNonce != nonce) {
+    if (_expectedNonce != nonce) return null;
+    if (nonce != null && (serverNonce is! String || serverNonce != nonce)) {
       return null;
     }
 

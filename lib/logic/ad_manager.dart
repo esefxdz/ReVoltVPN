@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 import 'package:revoltvpn/logic/crypto_service.dart';
@@ -97,13 +96,20 @@ class AdManager extends ChangeNotifier {
 
   // ── Show ad (or debug bypass) ─────────────────────────────────────
 
-  Future<bool> showAd(String adType) async {
-    // Debug bypass: fire fake AdMob callback so support ads work in dev.
-    // The server's ADMOB_BYPASS must be True for this to succeed.
-    if (!adsEnabled && kDebugMode) {
+  // Returns the nonce carried in the SSV custom_data when the reward was
+  // earned, null otherwise. The main flow passes it to vpn.connect(adNonce:)
+  // so the client waits for the session this ad created — minting a second
+  // nonce there is what broke every connect once ads were on.
+  Future<String?> showAd(String adType) async {
+    if (!adsEnabled) {
+      // Main connect: no ad to show — HivemindService.fetchConfigDirectly()
+      // fires the server-gated bypass itself (rule 87).
+      if (adType != 'support' || !kDebugMode) return null;
+
+      // Debug bypass: fire fake AdMob callback so support ads work in dev.
+      // The server's ADMOB_BYPASS must be True for this to succeed.
       final deviceId = await CryptoService.getDeviceId();
-      final nonce = '${Random().nextInt(0x7FFFFFFF)}-${DateTime.now().millisecondsSinceEpoch}';
-      HivemindService.setExpectedNonce(nonce);
+      final nonce = HivemindService.newNonce();
       try {
         final customData = jsonEncode({
           'device_id': deviceId,
@@ -115,13 +121,11 @@ class AdManager extends ChangeNotifier {
             '?signature=test&key_id=test'
             '&custom_data=${Uri.encodeComponent(customData)}');
         await HivemindService.directGet(fakeUrl, timeout: const Duration(seconds: 8));
-        return true;
+        return nonce;
       } catch (_) {
-        return false;
+        return null;
       }
     }
-
-    if (!adsEnabled) return false;
 
     await ensureSdkInitialized();
 
@@ -129,15 +133,12 @@ class AdManager extends ChangeNotifier {
       final loaded = await preloadAd();
       if (!loaded || _rewardedAd == null) {
         debugPrint('[AdManager] Cannot show ad, failed to load.');
-        return false;
+        return null;
       }
     }
 
     final deviceId = await CryptoService.getDeviceId();
-
-    final nonce = '${Random().nextInt(0x7FFFFFFF)}-${DateTime.now().millisecondsSinceEpoch}';
-    HivemindService.setExpectedNonce(nonce);
-    debugPrint('[AdManager] Ad nonce: $nonce');
+    final nonce = HivemindService.newNonce();
 
     final ssvOptions = ServerSideVerificationOptions(
       customData: jsonEncode({
@@ -182,7 +183,7 @@ class AdManager extends ChangeNotifier {
       },
     );
 
-    return rewardCompleter.future;
+    return await rewardCompleter.future ? nonce : null;
   }
 
   @override

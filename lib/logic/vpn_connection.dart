@@ -200,7 +200,7 @@ class VpnConnection extends ChangeNotifier {
     }
   }
 
-  Future<bool> connect({bool skipAdBypass = false}) async {
+  Future<bool> connect({String? adNonce, bool resume = false}) async {
     if (_disposed ||
         _userDisconnecting ||
         _status == VpnStatus.connected ||
@@ -254,7 +254,8 @@ class VpnConnection extends ChangeNotifier {
     String realUrl;
     try {
       realUrl = await HivemindService.fetchConfigDirectly(
-        skipAdBypass: skipAdBypass,
+        adNonce: adNonce,
+        resume: resume,
         onAttempt: (attempt, total) {
           if (!_isCurrentConnect(connectEpoch)) return;
           _setStatus(
