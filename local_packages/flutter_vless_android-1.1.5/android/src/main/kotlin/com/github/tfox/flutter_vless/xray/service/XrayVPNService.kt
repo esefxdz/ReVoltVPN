@@ -473,15 +473,18 @@ class XrayVPNService : VpnService() {
     // scheduled must never stop a working tunnel, so nothing here fails closed.
     // Dart re-pushes the deadline on every sync, so this runs about once a minute.
     private fun armExpiryWarning(runtimeToken: String, expiresAtEpochMs: Long) {
-        cancelSessionWarningAlarm()
         if (runtimeToken.isEmpty()) return
 
         val warnAt = expiresAtEpochMs - RevoltAlerts.WARNING_LEAD_MS
         // Deadline already inside the warning window (or past): either the alarm
         // has fired and its notification should stay up, or this is the short
-        // bootstrap deadline at connect, which must not warn at all.
+        // bootstrap deadline at connect, which must not warn at all. Nothing is
+        // cancelled here - Dart re-pushes the same deadline every 60 s with no
+        // dedupe, so cancelling on this branch would reliably delete the armed
+        // warning on the first sync after it came due and never re-arm it.
         if (warnAt <= System.currentTimeMillis()) return
 
+        cancelSessionWarningAlarm()
         // More than the lead away, so any warning on screen belongs to an older
         // deadline - a support top-up just pushed it out.
         RevoltAlerts.cancelExpiryWarning(this)
@@ -691,10 +694,22 @@ class XrayVPNService : VpnService() {
     private fun cancelSessionWarningAlarm() {
         try {
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            alarmManager.cancel(sessionWarningPendingIntent(""))
+            // Look the existing PendingIntent up instead of building one: with
+            // FLAG_UPDATE_CURRENT, constructing it to cancel rewrites the live
+            // alarm's RUNTIME_TOKEN to "" first, and a delivery already in
+            // flight would then be dropped as a stale generation.
+            existingSessionWarningPendingIntent()?.let { alarmManager.cancel(it) }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to cancel session-warning alarm", e)
         }
+    }
+
+    private fun existingSessionWarningPendingIntent(): PendingIntent? {
+        val intent = Intent(this, XrayVPNService::class.java)
+            .putExtra(EXTRA_SESSION_WARNING, true)
+        val flags = PendingIntent.FLAG_NO_CREATE or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        return PendingIntent.getService(this, SESSION_WARNING_REQUEST_CODE, intent, flags)
     }
 
     // A PendingIntent is identified by component plus request code, not extras,

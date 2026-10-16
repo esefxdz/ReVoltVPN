@@ -11,9 +11,12 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 - **Five-minute warning before a session ends.** The VPN service schedules it
   off the same deadline it already enforces, so the warning still arrives when
   the app is closed, and a support top-up moves it with the deadline.
-- **"Disconnected — not protected" notification** whenever a session ends for
-  any reason other than you tapping disconnect: expiry, the data limit, the
-  server ending the session, or the tunnel stopping on its own.
+- **"Disconnected — not protected" notification** when a session ends without
+  you asking: the 2-hour expiry, the data limit, the server ending the session,
+  or the tunnel reporting an error.
+- **SOCKS5 mode now asks for the notification permission.** It never did,
+  because it never raises the VPN consent dialog, so on Android 13+ these
+  alerts would have been dropped before they were shown.
 - **The app now shows what went wrong.** Connect errors, the reason a session
   ended, and progress while connecting appear under the status bar instead of
   the button silently going back to idle.

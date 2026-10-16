@@ -141,14 +141,28 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     if (vpnConnection.status == VpnStatus.disconnected) {
-      // No alert here. The runtime going away covers both the native deadline
-      // (which posts the alert itself, from a process that outlives this one)
-      // and the notification's Disconnect action, which the user tapped.
-      unawaited(_doDisconnect('VPN tunnel dropped'));
+      // The native deadline fires on the exact second while this 1 s tick is
+      // in arbitrary phase, so expiry almost always arrives here rather than
+      // at the countdown check in _tick - without this, the commonest session
+      // end left the UI with nothing to say.
+      _reconcileElapsedTime();
+      final expired = _hasSyncedOnce && _remainingSeconds <= 2;
+      // postAlert is false either way: the native side already posted for its
+      // own deadline, and the notification's Disconnect action is the user
+      // asking, which must never raise a "not protected" alert.
+      unawaited(_doDisconnect(
+        'VPN tunnel dropped',
+        endedMessage:
+            expired ? 'Your session ended. You are not protected.' : null,
+        postAlert: false,
+      ));
     }
   }
 
-  Future<void> start() async {
+  // resetSupportClaim is false when re-attaching to a session the device
+  // already holds: the support top-up is once per server session, and the
+  // claim flag is the only thing enforcing that.
+  Future<void> start({bool resetSupportClaim = true}) async {
     _sessionEpoch++;
     _remainingSeconds = 0;
     _remainingAtLastSync = 0;
@@ -165,10 +179,12 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     _lastEndMessage = null;
     NotificationService.reset();
 
-    _supportStateEpoch++;
-    _supportRewardClaimed = false;
-    _supportRewardStateLoaded = true;
-    unawaited(_persistSupportRewardState(false));
+    if (resetSupportClaim) {
+      _supportStateEpoch++;
+      _supportRewardClaimed = false;
+      _supportRewardStateLoaded = true;
+      unawaited(_persistSupportRewardState(false));
+    }
 
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), _tick);
@@ -233,7 +249,11 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
   // not ask for, and its presence is also what posts the "not protected"
   // notification. Both exist so nobody is left on their real IP without being
   // told. A user-requested disconnect passes nothing.
-  Future<void> _doDisconnect(String reason, {String? endedMessage}) async {
+  Future<void> _doDisconnect(
+    String reason, {
+    String? endedMessage,
+    bool postAlert = true,
+  }) async {
     if (_isDisconnecting) return;
     _isDisconnecting = true;
     _sessionEpoch++;
@@ -252,7 +272,7 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
 
     await vpnConnection.disconnect();
-    if (endedMessage != null) {
+    if (endedMessage != null && postAlert) {
       unawaited(NotificationService.showDisconnectedAlert());
     }
 

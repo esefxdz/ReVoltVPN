@@ -224,6 +224,18 @@ class VpnConnection extends ChangeNotifier {
       return false;
     }
 
+    // SOCKS5 mode skips requestPermission below (it would raise the VPN
+    // consent dialog for an interface it never creates), so ask for the
+    // notification permission on its own - the session alerts need it.
+    if (!kIsWeb && _activeMode == ConnectionMode.proxy) {
+      try {
+        await _nativeControl.invokeMethod<void>('requestNotificationPermission');
+      } catch (e) {
+        debugPrint('[VPN] Notification permission request failed: $e');
+      }
+      if (!_isCurrentConnect(connectEpoch)) return false;
+    }
+
     if (!kIsWeb && _activeMode == ConnectionMode.tun) {
       final ok = await _vless.requestPermission();
       if (!_isCurrentConnect(connectEpoch)) return false;

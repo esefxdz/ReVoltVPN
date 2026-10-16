@@ -82,7 +82,7 @@ class _ConnectionModeTileState extends State<ConnectionModeTile> {
       if (!mounted) return;
       if (await vpn.connect(resume: true)) {
         if (!mounted) return;
-        await timer.start();
+        await timer.start(resetSupportClaim: false);
       }
     } finally {
       if (mounted) {

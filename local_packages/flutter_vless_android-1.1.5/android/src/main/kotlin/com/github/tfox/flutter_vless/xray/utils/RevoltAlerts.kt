@@ -97,6 +97,9 @@ object RevoltAlerts {
                 .setSmallIcon(icon)
                 .setAutoCancel(true)
                 .setOngoing(false)
+                // Both processes can post the disconnected alert; the second
+                // post replaces the first and must not sound again.
+                .setOnlyAlertOnce(true)
 
             launchIntent(context)?.let { builder.setContentIntent(it) }
 
