@@ -426,6 +426,20 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     final elapsed = clock.elapsed.inSeconds;
     _remainingSeconds =
         (_remainingAtLastSync - elapsed).clamp(0, 1 << 31).toInt();
+
+    // The Stopwatch is CLOCK_MONOTONIC and stops while the device is
+    // suspended, so after a long sleep it over-reports - and with the server
+    // unreachable no sync arrives to correct it, which is exactly the state
+    // the app now stays in rather than disconnecting. Take whichever is
+    // smaller, never the wall clock alone: a clock set backwards must not be
+    // able to extend a session.
+    final deadline = _deadlineAt;
+    if (deadline != null) {
+      final byWallClock = deadline.difference(DateTime.now()).inSeconds;
+      if (byWallClock < _remainingSeconds) {
+        _remainingSeconds = byWallClock.clamp(0, 1 << 31).toInt();
+      }
+    }
   }
 
   @override

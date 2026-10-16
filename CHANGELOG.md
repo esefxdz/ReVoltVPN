@@ -12,8 +12,8 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
   off the same deadline it already enforces, so the warning still arrives when
   the app is closed, and a support top-up moves it with the deadline.
 - **"Disconnected — not protected" notification** when a session ends without
-  you asking: the 2-hour expiry, the data limit, the server ending the session,
-  or the tunnel reporting an error.
+  you asking: the 2-hour expiry, the data limit, or the server ending the
+  session.
 - **SOCKS5 mode now asks for the notification permission.** It never did,
   because it never raises the VPN consent dialog, so on Android 13+ these
   alerts would have been dropped before they were shown.
