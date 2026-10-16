@@ -42,6 +42,11 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
 
   int _lastUsedBytes = 0;
   Stopwatch? _sinceLastSuccessfulSync;
+  // Wall-clock deadline, kept alongside the Stopwatch because they answer
+  // different questions. The Stopwatch is CLOCK_MONOTONIC: it does not advance
+  // while the device is suspended, which is exactly when an RTC_WAKEUP expiry
+  // alarm fires, so it cannot be used to recognise an expiry after sleep.
+  DateTime? _deadlineAt;
   double _currentSpeedKBps = 0.0;
 
   SessionTimer({required this.vpnConnection}) {
@@ -145,8 +150,12 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
       // in arbitrary phase, so expiry almost always arrives here rather than
       // at the countdown check in _tick - without this, the commonest session
       // end left the UI with nothing to say.
-      _reconcileElapsedTime();
-      final expired = _hasSyncedOnce && _remainingSeconds <= 2;
+      final deadline = _deadlineAt;
+      final expired = _hasSyncedOnce &&
+          deadline != null &&
+          DateTime.now().isAfter(
+            deadline.subtract(const Duration(seconds: 5)),
+          );
       // postAlert is false either way: the native side already posted for its
       // own deadline, and the notification's Disconnect action is the user
       // asking, which must never raise a "not protected" alert.
@@ -170,6 +179,7 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     _lastUsedBytes = 0;
     _sinceLastSuccessfulSync?.stop();
     _sinceLastSuccessfulSync = null;
+    _deadlineAt = null;
     _currentSpeedKBps = 0.0;
     _tickCount = 0;
     _hasSyncedOnce = false;
@@ -260,6 +270,7 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     debugPrint('[Timer] Disconnecting: $reason');
 
     _lastEndMessage = endedMessage;
+    _deadlineAt = null;
     _timer?.cancel();
     _timer = null;
     _currentSpeedKBps = 0.0;
@@ -340,6 +351,9 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
         final elapsedMs = _sinceLastSuccessfulSync?.elapsedMilliseconds;
         _remainingAtLastSync = expiresValue.toInt();
         _remainingSeconds = _remainingAtLastSync;
+        _deadlineAt = DateTime.now().add(
+          Duration(seconds: _remainingAtLastSync),
+        );
         _usedBytes = _readNonNegativeInt(data['used_bytes'], _usedBytes);
 
         final deltaBytes = _usedBytes - _lastUsedBytes;
