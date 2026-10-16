@@ -7,6 +7,24 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 
 ## [Unreleased]
 
+### Added
+- **Five-minute warning before a session ends.** The VPN service schedules it
+  off the same deadline it already enforces, so the warning still arrives when
+  the app is closed, and a support top-up moves it with the deadline.
+- **"Disconnected — not protected" notification** whenever a session ends for
+  any reason other than you tapping disconnect: expiry, the data limit, the
+  server ending the session, or the tunnel stopping on its own.
+- **The app now shows what went wrong.** Connect errors, the reason a session
+  ended, and progress while connecting appear under the status bar instead of
+  the button silently going back to idle.
+
+### Changed
+- **A control-plane outage no longer tears down a working tunnel.** The app used
+  to disconnect itself after about two minutes of failed status polls, putting
+  you back on your real IP; it now keeps the tunnel up and shows
+  "Can't reach the server — still connected". Expiry is still enforced by the
+  VPN service's own deadline and by the server.
+
 ### Fixed
 - **Rewarded ads no longer break connecting.** With ads enabled, the ad's
   server-side-verification nonce and the nonce the connect flow waited for were

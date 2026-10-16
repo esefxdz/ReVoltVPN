@@ -20,6 +20,7 @@ import android.os.VibratorManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.github.tfox.flutter_vless.xray.utils.RevoltAlerts
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -61,14 +62,23 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, notificationChannel)
             .setMethodCallHandler { call, result ->
-                if (call.method == "updateNotificationText") {
-                    val text = call.argument<String>("text") ?: ""
-                    val title = call.argument<String>("title") ?: "Revolt VPN"
-                    val action = call.argument<String>("disconnectLabel") ?: "Disconnect"
-                    updateVpnNotification(title, text, action)
-                    result.success(null)
-                } else {
-                    result.notImplemented()
+                when (call.method) {
+                    "updateNotificationText" -> {
+                        val text = call.argument<String>("text") ?: ""
+                        val title = call.argument<String>("title") ?: "Revolt VPN"
+                        val action = call.argument<String>("disconnectLabel") ?: "Disconnect"
+                        updateVpnNotification(title, text, action)
+                        result.success(null)
+                    }
+                    // Session ends only Dart can see (cap exhausted, server
+                    // ended the session, VPN error). The VPN service posts the
+                    // same alert for its own deadline, where this process may
+                    // already be gone. RevoltAlerts owns both.
+                    "showDisconnectedAlert" -> {
+                        RevoltAlerts.postDisconnected(this)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
                 }
             }
 

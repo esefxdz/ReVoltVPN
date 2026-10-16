@@ -5,6 +5,44 @@ import 'package:revoltvpn/logic/app_colors.dart';
 import 'package:revoltvpn/logic/session_timer.dart';
 import 'package:revoltvpn/logic/vpn_connection.dart';
 
+// Nothing rendered the connection's own messages, so they are collected here
+// in one place: whatever the user most needs to know right now, and whether it
+// is a problem (red) or just progress (dim).
+class _StatusDetail {
+  const _StatusDetail(this.text, {this.isProblem = false});
+
+  final String text;
+  final bool isProblem;
+}
+
+_StatusDetail? _detail(VpnConnection vpn, SessionTimer timer) {
+  final error = vpn.errorMessage;
+  if (error != null && error.isNotEmpty) {
+    return _StatusDetail(error.replaceAll('\n', ' '), isProblem: true);
+  }
+
+  if (vpn.status == VpnStatus.connecting ||
+      vpn.status == VpnStatus.disconnecting) {
+    return _StatusDetail(vpn.statusMessage);
+  }
+
+  // The tunnel still carries traffic; only the control plane is missing, so
+  // this is a warning, not a disconnect (review #2).
+  if (vpn.status == VpnStatus.connected && timer.serverUnreachable) {
+    return const _StatusDetail(
+      'Can\'t reach the server — still connected',
+      isProblem: true,
+    );
+  }
+
+  if (vpn.status != VpnStatus.connected) {
+    final ended = timer.lastEndMessage;
+    if (ended != null) return _StatusDetail(ended, isProblem: true);
+  }
+
+  return null;
+}
+
 class StatusBar extends StatelessWidget {
   const StatusBar({super.key});
 
@@ -23,6 +61,8 @@ class StatusBar extends StatelessWidget {
             : (isConnecting
                 ? 'Connecting…'
                 : (vpn.serverReachable ? 'Ready' : 'Offline'));
+
+        final detail = _detail(vpn, timer);
 
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -96,6 +136,23 @@ class StatusBar extends StatelessWidget {
                   ],
                 ),
               ),
+              // Until this existed, a failed connect, an expired session and a
+              // cap kill all just turned the button back to idle - the user
+              // could not tell protected from unprotected (review #3).
+              if (detail != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    detail.text,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: detail.isProblem
+                          ? AppColors.red
+                          : AppColors.textDim,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
             ],
           ),
         );

@@ -36,8 +36,6 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
   static const FlutterSecureStorage _supportStorage = FlutterSecureStorage();
 
   static const int _maxConsecutiveFailures = 3;
-  static const int _maxOfflineSeconds = 120;
-  int _offlineSeconds = 0;
 
   static const int _pollIntervalSeconds = 60;
   static const int _backgroundPollIntervalSeconds = 60;
@@ -66,6 +64,17 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
 
   int get usedBytes => _usedBytes;
   double get currentSpeedKBps => _currentSpeedKBps;
+
+  // True once the control plane has missed enough polls in a row to be worth
+  // telling the user about. It is a display state only: a tunnel that still
+  // carries traffic is never torn down because the API is unreachable (the
+  // native deadline and the server both still enforce expiry).
+  bool get serverUnreachable => _consecutiveFailures >= _maxConsecutiveFailures;
+
+  // Why the last session ended, when the user did not end it themselves.
+  // Cleared on the next connect. Rendered by status_bar.dart.
+  String? _lastEndMessage;
+  String? get lastEndMessage => _lastEndMessage;
 
   String get formatted {
     final h = (_remainingSeconds ~/ 3600).toString().padLeft(2, '0');
@@ -124,11 +133,17 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     if (!hadActiveSession || _isDisconnecting) return;
 
     if (vpnConnection.status == VpnStatus.error) {
-      unawaited(_doDisconnect('VPN entered error state'));
+      unawaited(_doDisconnect(
+        'VPN entered error state',
+        endedMessage: 'The tunnel stopped. You are not protected.',
+      ));
       return;
     }
 
     if (vpnConnection.status == VpnStatus.disconnected) {
+      // No alert here. The runtime going away covers both the native deadline
+      // (which posts the alert itself, from a process that outlives this one)
+      // and the notification's Disconnect action, which the user tapped.
       unawaited(_doDisconnect('VPN tunnel dropped'));
     }
   }
@@ -145,9 +160,9 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     _tickCount = 0;
     _hasSyncedOnce = false;
     _consecutiveFailures = 0;
-    _offlineSeconds = 0;
     _isDisconnecting = false;
     _appBackgrounded = false;
+    _lastEndMessage = null;
     NotificationService.reset();
 
     _supportStateEpoch++;
@@ -169,16 +184,11 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
       _reconcileElapsedTime();
     }
 
-    if (_consecutiveFailures >= _maxConsecutiveFailures) {
-      _offlineSeconds++;
-      if (_offlineSeconds >= _maxOfflineSeconds) {
-        unawaited(_doDisconnect('Server unreachable'));
-        return;
-      }
-    }
-
     if (_hasSyncedOnce && _remainingSeconds <= 0) {
-      unawaited(_doDisconnect('Session expired'));
+      unawaited(_doDisconnect(
+        'Session expired',
+        endedMessage: 'Your session ended. You are not protected.',
+      ));
       return;
     }
 
@@ -219,12 +229,17 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     await _doDisconnect(reason);
   }
 
-  Future<void> _doDisconnect(String reason) async {
+  // endedMessage is the one sentence the UI shows after an end the user did
+  // not ask for, and its presence is also what posts the "not protected"
+  // notification. Both exist so nobody is left on their real IP without being
+  // told. A user-requested disconnect passes nothing.
+  Future<void> _doDisconnect(String reason, {String? endedMessage}) async {
     if (_isDisconnecting) return;
     _isDisconnecting = true;
     _sessionEpoch++;
     debugPrint('[Timer] Disconnecting: $reason');
 
+    _lastEndMessage = endedMessage;
     _timer?.cancel();
     _timer = null;
     _currentSpeedKBps = 0.0;
@@ -237,6 +252,9 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
 
     await vpnConnection.disconnect();
+    if (endedMessage != null) {
+      unawaited(NotificationService.showDisconnectedAlert());
+    }
 
     _isDisconnecting = false;
     notifyListeners();
@@ -282,7 +300,11 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
           return;
         }
         if (!activeValue) {
-          await _doDisconnect('Server ended session');
+          await _doDisconnect(
+            'Server ended session',
+            endedMessage:
+                'The server ended your session. You are not protected.',
+          );
           return;
         }
 
@@ -313,7 +335,10 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
         _sinceLastSuccessfulSync = Stopwatch()..start();
 
         if (data['cap_exhausted'] == true) {
-          await _doDisconnect('Data cap reached');
+          await _doDisconnect(
+            'Data cap reached',
+            endedMessage: 'Data limit reached. You are not protected.',
+          );
           return;
         }
 
@@ -322,12 +347,15 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
           await vpnConnection.setNativeSessionDeadline(_remainingAtLastSync);
         } catch (e) {
           debugPrint('[Timer] Failed to arm native session deadline: $e');
-          await _doDisconnect('Native session deadline unavailable');
+          await _doDisconnect(
+            'Native session deadline unavailable',
+            endedMessage:
+                'Could not arm the session timer. You are not protected.',
+          );
           return;
         }
         if (epoch != _sessionEpoch || _isDisconnecting) return;
         _consecutiveFailures = 0;
-        _offlineSeconds = 0;
         _hasSyncedOnce = true;
         notifyListeners();
       } else {
