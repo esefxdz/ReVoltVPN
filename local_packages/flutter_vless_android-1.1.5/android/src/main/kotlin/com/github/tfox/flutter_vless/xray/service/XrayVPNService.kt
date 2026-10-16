@@ -67,9 +67,8 @@ class XrayVPNService : VpnService() {
             return START_NOT_STICKY
         }
 
-        // Must stay above the command handling below: an intent carrying no
-        // COMMAND falls through to the final else and stops a live tunnel - in
-        // this case five minutes early, which is what it warns about.
+        // Must stay above the command dispatch: an intent with no COMMAND
+        // falls through to the final else and stops the tunnel.
         if (intent.getBooleanExtra(EXTRA_SESSION_WARNING, false)) {
             handleSessionWarningAlarm(intent.getStringExtra("RUNTIME_TOKEN").orEmpty())
             return START_NOT_STICKY
@@ -428,12 +427,8 @@ class XrayVPNService : VpnService() {
         }
     }
 
-    // userRequested marks the two stops the user drove themselves. Everything
-    // else that reaches here while a tunnel is live - the expiry deadline, an
-    // Xray or TUN failure, a fail-closed deadline arm - took protection away
-    // without being asked, and must say so. isRunning is read before cleanup()
-    // clears it, which is also what keeps a failed connect silent: it never had
-    // a live tunnel to interrupt.
+    // Anything that stops a live tunnel unasked must say so. isRunning is read
+    // before cleanup() clears it, which keeps a failed connect silent.
     private fun stopAll(
         confirmationToken: String = currentConfig?.RUNTIME_TOKEN.orEmpty(),
         userRequested: Boolean = false,
@@ -479,33 +474,26 @@ class XrayVPNService : VpnService() {
         else deadlineHandler.postDelayed(sessionDeadlineRunnable, delayMs)
     }
 
-    // Schedules the five-minute warning off the same deadline the expiry alarm
-    // holds. Unlike the deadline this is advisory: a warning that cannot be
-    // scheduled must never stop a working tunnel, so nothing here fails closed.
-    // Dart re-pushes the deadline on every sync, so this runs about once a minute.
+    // Advisory, unlike the deadline itself: nothing here fails closed. Dart
+    // re-pushes the deadline every sync, so this runs about once a minute.
     private fun armExpiryWarning(runtimeToken: String, expiresAtEpochMs: Long) {
         if (runtimeToken.isEmpty()) return
 
         val warnAt = expiresAtEpochMs - RevoltAlerts.WARNING_LEAD_MS
-        // Deadline already inside the warning window (or past): either the alarm
-        // has fired and its notification should stay up, or this is the short
-        // bootstrap deadline at connect, which must not warn at all. Nothing is
-        // cancelled here - Dart re-pushes the same deadline every 60 s with no
-        // dedupe, so cancelling on this branch would reliably delete the armed
-        // warning on the first sync after it came due and never re-arm it.
+        // Inside the window already (or the short bootstrap deadline). Cancel
+        // nothing here: with no dedupe on the re-push, cancelling on this
+        // branch deletes the armed warning and never re-arms it.
         if (warnAt <= System.currentTimeMillis() + WARNING_REARM_GRACE_MS) return
 
         cancelSessionWarningAlarm()
-        // More than the lead away, so any warning on screen belongs to an older
-        // deadline - a support top-up just pushed it out.
+        // A warning on screen now belongs to an older deadline (top-up).
         RevoltAlerts.cancelExpiryWarning(this)
 
         try {
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
             val pendingIntent = sessionWarningPendingIntent(runtimeToken)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                // Inexact on purpose: minute-level slop is fine for a warning,
-                // and it keeps this off the SCHEDULE_EXACT_ALARM path.
+                // Inexact on purpose - keeps this off SCHEDULE_EXACT_ALARM.
                 alarmManager.setAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
                     warnAt,
@@ -522,8 +510,7 @@ class XrayVPNService : VpnService() {
     private fun handleSessionWarningAlarm(alarmToken: String) {
         val config = currentConfig
         if (config == null) {
-            // The alarm woke a service process with no live runtime; there is
-            // no session left to warn about.
+            // Woke a process with no live runtime; nothing to warn about.
             stopSelf()
             return
         }
@@ -537,9 +524,8 @@ class XrayVPNService : VpnService() {
         if (remaining < WARNING_FLOOR_MS ||
             remaining > RevoltAlerts.WARNING_LEAD_MS + WARNING_SLACK_MS
         ) {
-            // Too late to be a five-minute warning, or for a deadline that has
-            // moved. Saying "5 minutes" with seconds left is worse than silence;
-            // the disconnected alert follows either way.
+            // Too late, or the deadline moved. Saying "5 minutes" with
+            // seconds left is worse than silence.
             Log.w(TAG, "Ignoring session warning outside the warning window")
             return
         }
@@ -707,10 +693,8 @@ class XrayVPNService : VpnService() {
     private fun cancelSessionWarningAlarm() {
         try {
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            // Look the existing PendingIntent up instead of building one: with
-            // FLAG_UPDATE_CURRENT, constructing it to cancel rewrites the live
-            // alarm's RUNTIME_TOKEN to "" first, and a delivery already in
-            // flight would then be dropped as a stale generation.
+            // Look it up rather than build it: FLAG_UPDATE_CURRENT would
+            // rewrite the live alarm's RUNTIME_TOKEN to "" before cancelling.
             existingSessionWarningPendingIntent()?.let { alarmManager.cancel(it) }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to cancel session-warning alarm", e)
@@ -725,9 +709,8 @@ class XrayVPNService : VpnService() {
         return PendingIntent.getService(this, SESSION_WARNING_REQUEST_CODE, intent, flags)
     }
 
-    // A PendingIntent is identified by component plus request code, not extras,
-    // so the warning needs its own code or it would overwrite - and later
-    // cancel - the expiry alarm.
+    // Identity is component + request code, not extras, so the warning needs
+    // its own code or it clobbers the expiry alarm.
     private fun sessionWarningPendingIntent(runtimeToken: String): PendingIntent {
         val intent = Intent(this, XrayVPNService::class.java)
             .putExtra(EXTRA_SESSION_WARNING, true)
@@ -814,13 +797,11 @@ class XrayVPNService : VpnService() {
         private const val EXTRA_SESSION_WARNING = "SESSION_WARNING"
         private const val SESSION_EXPIRY_REQUEST_CODE = 1001
         private const val SESSION_WARNING_REQUEST_CODE = 1002
-        // An idle-capable alarm can run late; accept that much drift before
-        // treating a warning as belonging to a deadline that has moved.
+        // Drift allowed before a warning is treated as belonging elsewhere.
         private const val WARNING_SLACK_MS = 60_000L
-        // Don't re-arm (and so re-post) for a deadline that only moved by the
-        // jitter in a network round trip.
+        // Don't re-arm for a deadline that moved by round-trip jitter alone.
         private const val WARNING_REARM_GRACE_MS = 15_000L
-        // Below this the warning has lost its point; stay quiet instead.
+        // Below this the warning has lost its point.
         private const val WARNING_FLOOR_MS = 60_000L
     }
 }

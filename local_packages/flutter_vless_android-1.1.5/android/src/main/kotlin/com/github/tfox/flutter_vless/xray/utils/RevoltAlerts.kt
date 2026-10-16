@@ -12,23 +12,16 @@ import android.util.Log
 
 // local_packages/.../xray/utils/RevoltAlerts.kt
 //
-// The two user-facing session alerts, built in one place because two processes
-// post them: XrayVPNService (:RunSoLibXrayDaemon) owns the native deadline and
-// can still warn when the UI process is gone, while MainActivity posts the
-// "not protected" alert for session ends only Dart can see (cap exhausted,
-// server ended the session, VPN error). Both use the same ids, so whichever
-// posts second just replaces the first notification instead of stacking.
-//
-// These are deliberately NOT the foreground-service notification (id 1,
-// channel REVOLT_VPN_SERVICE, IMPORTANCE_LOW): an alert the user must notice
-// needs its own high-importance channel, and must be dismissible.
+// The two session alerts. Both XrayVPNService (:RunSoLibXrayDaemon) and
+// MainActivity post them, sharing ids so a second post replaces. Separate from
+// the foreground-service notification (id 1, IMPORTANCE_LOW): these must be
+// noticed, and must be dismissible.
 object RevoltAlerts {
 
     const val CHANNEL_ID = "REVOLT_VPN_ALERTS"
     const val WARNING_NOTIFICATION_ID = 2
     const val DISCONNECTED_NOTIFICATION_ID = 3
 
-    // How long before the session deadline the warning fires.
     const val WARNING_LEAD_MS = 5 * 60 * 1000L
 
     private const val TAG = "RevoltAlerts"
@@ -97,8 +90,7 @@ object RevoltAlerts {
                 .setSmallIcon(icon)
                 .setAutoCancel(true)
                 .setOngoing(false)
-                // Both processes can post the disconnected alert; the second
-                // post replaces the first and must not sound again.
+                // A replacing post must not sound again.
                 .setOnlyAlertOnce(true)
 
             launchIntent(context)?.let { builder.setContentIntent(it) }
@@ -118,9 +110,7 @@ object RevoltAlerts {
     private fun manager(context: Context): NotificationManager? =
         context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
 
-    // Importance is fixed when the channel is first created, so this asks for
-    // HIGH up front — a session alert the user never sees is the whole bug
-    // these notifications exist to fix.
+    // Importance is fixed at creation, so ask for HIGH up front.
     private fun ensureChannel(manager: NotificationManager) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         if (manager.getNotificationChannel(CHANNEL_ID) != null) return

@@ -240,10 +240,7 @@ class FlutterVlessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                 }
             }
 
-            // POST_NOTIFICATIONS on its own, without VpnService.prepare: SOCKS5
-            // mode never establishes a VPN interface, so it never called
-            // requestPermission and both session alerts were dropped unasked
-            // for on Android 13+.
+            // POST_NOTIFICATIONS without VpnService.prepare, for proxy mode.
             "requestNotificationPermission" -> {
                 val currentActivity = activity
                 if (currentActivity == null) {

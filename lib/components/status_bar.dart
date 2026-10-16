@@ -5,9 +5,7 @@ import 'package:revoltvpn/logic/app_colors.dart';
 import 'package:revoltvpn/logic/session_timer.dart';
 import 'package:revoltvpn/logic/vpn_connection.dart';
 
-// Nothing rendered the connection's own messages, so they are collected here
-// in one place: whatever the user most needs to know right now, and whether it
-// is a problem (red) or just progress (dim).
+// The one line worth showing right now, and whether it is a problem.
 class _StatusDetail {
   const _StatusDetail(this.text, {this.isProblem = false});
 
@@ -26,8 +24,7 @@ _StatusDetail? _detail(VpnConnection vpn, SessionTimer timer) {
     return _StatusDetail(vpn.statusMessage);
   }
 
-  // The tunnel still carries traffic; only the control plane is missing, so
-  // this is a warning, not a disconnect (review #2).
+  // Control plane only - the tunnel still carries traffic.
   if (vpn.status == VpnStatus.connected && timer.serverUnreachable) {
     return const _StatusDetail(
       'Can\'t reach the server — still connected',
@@ -136,9 +133,7 @@ class StatusBar extends StatelessWidget {
                   ],
                 ),
               ),
-              // Until this existed, a failed connect, an expired session and a
-              // cap kill all just turned the button back to idle - the user
-              // could not tell protected from unprotected (review #3).
+              // Errors and session-end reasons used to render nowhere.
               if (detail != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),

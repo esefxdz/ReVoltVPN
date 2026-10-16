@@ -81,15 +81,10 @@ class HivemindService {
     _expectedNonce = null;
   }
 
-  // Fetches this device's VLESS URL. Three ways in:
-  //   adNonce != null — a real rewarded ad was watched; its SSV custom_data
-  //                     carried this nonce, so wait for a session holding it.
-  //                     Google's SSV callback can lag, so poll longer.
-  //   resume == true  — re-attach to the session already granted (mode-switch
-  //                     reconnect in connection_mode.dart). No ad, no bypass,
-  //                     any nonce accepted — device_id already owns it.
-  //   neither         — ads disabled: mint a nonce and fire the server-gated
-  //                     ADMOB_BYPASS callback (rule 87).
+  // Fetches this device's VLESS URL.
+  //   adNonce — wait for the session that ad created (SSV can lag, so poll longer)
+  //   resume  — re-attach to the session already held; any nonce accepted
+  //   neither — ads off: mint a nonce and fire the bypass (rule 87)
   static Future<String> fetchConfigDirectly({
     void Function(int attempt, int total)? onAttempt,
     String? adNonce,

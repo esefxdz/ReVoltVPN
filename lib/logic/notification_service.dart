@@ -32,15 +32,12 @@ class NotificationService {
     }
   }
 
-  // Posts the "disconnected - not protected" alert for a session end the user
-  // did not ask for. The native service posts the same alert (same id) when
-  // its own deadline fires, because by then this process may be gone; a double
-  // post replaces rather than stacks.
+  // Same id as the service's own alert, so a double post replaces.
   static Future<void> showDisconnectedAlert() async {
     try {
       await _channel.invokeMethod<void>('showDisconnectedAlert');
     } catch (_) {
-      // Informational only - never worth failing a disconnect over.
+      // Informational only.
     }
   }
 

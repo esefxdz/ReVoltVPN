@@ -67,10 +67,8 @@ class _ConnectionModeTileState extends State<ConnectionModeTile> {
     widget.onChanged?.call(next);
   }
 
-  // Recovers from an orphaned proxy: tear the runtime down and re-attach to
-  // the session this device already holds (connect(resume: true)), so a
-  // readable set of credentials exists again. No rewarded ad and no new
-  // session — the user is repairing a connection they already paid for.
+  // Recovers an orphaned proxy: tear the runtime down and re-attach to the
+  // session already held. No ad, no new session.
   Future<void> _reconnect() async {
     if (_reconnecting) return;
     final vpn = context.read<VpnConnection>();

@@ -70,10 +70,7 @@ class MainActivity : FlutterActivity() {
                         updateVpnNotification(title, text, action)
                         result.success(null)
                     }
-                    // Session ends only Dart can see (cap exhausted, server
-                    // ended the session, VPN error). The VPN service posts the
-                    // same alert for its own deadline, where this process may
-                    // already be gone. RevoltAlerts owns both.
+                    // Session ends only Dart sees; the service posts the rest.
                     "showDisconnectedAlert" -> {
                         RevoltAlerts.postDisconnected(this)
                         result.success(null)

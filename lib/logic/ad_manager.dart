@@ -96,18 +96,14 @@ class AdManager extends ChangeNotifier {
 
   // ── Show ad (or debug bypass) ─────────────────────────────────────
 
-  // Returns the nonce carried in the SSV custom_data when the reward was
-  // earned, null otherwise. The main flow passes it to vpn.connect(adNonce:)
-  // so the client waits for the session this ad created — minting a second
-  // nonce there is what broke every connect once ads were on.
+  // Returns the nonce put in the SSV custom_data, null if unrewarded. connect()
+  // must reuse it: minting a second nonce there rejects the ad's own session.
   Future<String?> showAd(String adType) async {
     if (!adsEnabled) {
-      // Main connect: no ad to show — HivemindService.fetchConfigDirectly()
-      // fires the server-gated bypass itself (rule 87).
+      // Main connect fires its own bypass in fetchConfigDirectly (rule 87).
       if (adType != 'support' || !kDebugMode) return null;
 
-      // Debug bypass: fire fake AdMob callback so support ads work in dev.
-      // The server's ADMOB_BYPASS must be True for this to succeed.
+      // Needs ADMOB_BYPASS=True server-side.
       final deviceId = await CryptoService.getDeviceId();
       final nonce = HivemindService.newNonce();
       try {

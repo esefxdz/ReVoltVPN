@@ -42,10 +42,8 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
 
   int _lastUsedBytes = 0;
   Stopwatch? _sinceLastSuccessfulSync;
-  // Wall-clock deadline, kept alongside the Stopwatch because they answer
-  // different questions. The Stopwatch is CLOCK_MONOTONIC: it does not advance
-  // while the device is suspended, which is exactly when an RTC_WAKEUP expiry
-  // alarm fires, so it cannot be used to recognise an expiry after sleep.
+  // Wall clock, because the Stopwatch is CLOCK_MONOTONIC and stops across
+  // device suspend - exactly when the RTC_WAKEUP expiry alarm fires.
   DateTime? _deadlineAt;
   double _currentSpeedKBps = 0.0;
 
@@ -70,14 +68,10 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
   int get usedBytes => _usedBytes;
   double get currentSpeedKBps => _currentSpeedKBps;
 
-  // True once the control plane has missed enough polls in a row to be worth
-  // telling the user about. It is a display state only: a tunnel that still
-  // carries traffic is never torn down because the API is unreachable (the
-  // native deadline and the server both still enforce expiry).
+  // Display state only - an unreachable API never tears down a live tunnel.
   bool get serverUnreachable => _consecutiveFailures >= _maxConsecutiveFailures;
 
-  // Why the last session ended, when the user did not end it themselves.
-  // Cleared on the next connect. Rendered by status_bar.dart.
+  // Why the last session ended, if the user did not end it. Cleared on connect.
   String? _lastEndMessage;
   String? get lastEndMessage => _lastEndMessage;
 
@@ -146,19 +140,15 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     if (vpnConnection.status == VpnStatus.disconnected) {
-      // The native deadline fires on the exact second while this 1 s tick is
-      // in arbitrary phase, so expiry almost always arrives here rather than
-      // at the countdown check in _tick - without this, the commonest session
-      // end left the UI with nothing to say.
+      // The native deadline beats the 1 s tick, so expiry lands here, not in
+      // _tick. postAlert is false: the service already posted, and a
+      // notification-Disconnect tap is the user asking.
       final deadline = _deadlineAt;
       final expired = _hasSyncedOnce &&
           deadline != null &&
           DateTime.now().isAfter(
             deadline.subtract(const Duration(seconds: 5)),
           );
-      // postAlert is false either way: the native side already posted for its
-      // own deadline, and the notification's Disconnect action is the user
-      // asking, which must never raise a "not protected" alert.
       unawaited(_doDisconnect(
         'VPN tunnel dropped',
         endedMessage:
@@ -168,9 +158,8 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  // resetSupportClaim is false when re-attaching to a session the device
-  // already holds: the support top-up is once per server session, and the
-  // claim flag is the only thing enforcing that.
+  // resetSupportClaim is false when re-attaching to a session already held:
+  // the top-up is once per server session and this flag is what enforces it.
   Future<void> start({bool resetSupportClaim = true}) async {
     _sessionEpoch++;
     _remainingSeconds = 0;
@@ -255,11 +244,8 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     await _doDisconnect(reason);
   }
 
-  // endedMessage is the one sentence the UI shows after an end the user did
-  // not ask for; postAlert independently decides whether to raise the "not
-  // protected" notification, which the native service already posts for every
-  // stop it sees. Both exist so nobody is left on their real IP without being
-  // told. A user-requested disconnect passes neither.
+  // endedMessage is what the UI shows; postAlert raises the notification.
+  // A user-requested disconnect passes neither.
   Future<void> _doDisconnect(
     String reason, {
     String? endedMessage,
@@ -428,12 +414,8 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     _remainingSeconds =
         (_remainingAtLastSync - elapsed).clamp(0, 1 << 31).toInt();
 
-    // The Stopwatch is CLOCK_MONOTONIC and stops while the device is
-    // suspended, so after a long sleep it over-reports - and with the server
-    // unreachable no sync arrives to correct it, which is exactly the state
-    // the app now stays in rather than disconnecting. Take whichever is
-    // smaller, never the wall clock alone: a clock set backwards must not be
-    // able to extend a session.
+    // The Stopwatch over-reports after device suspend. Take the smaller of
+    // the two, never the wall clock alone - a backward clock must not extend.
     final deadline = _deadlineAt;
     if (deadline != null) {
       final byWallClock = deadline.difference(DateTime.now()).inSeconds;
