@@ -91,7 +91,7 @@ class XrayVPNService : VpnService() {
                 Log.w(TAG, "Ignoring STOP_SERVICE without matching runtime generation")
                 return START_NOT_STICKY
             }
-            stopAll(requestedToken)
+            stopAll(requestedToken, userRequested = true)
             return START_NOT_STICKY
         }
 
@@ -428,14 +428,25 @@ class XrayVPNService : VpnService() {
         }
     }
 
-    private fun stopAll(confirmationToken: String = currentConfig?.RUNTIME_TOKEN.orEmpty()) {
+    // userRequested marks the two stops the user drove themselves. Everything
+    // else that reaches here while a tunnel is live - the expiry deadline, an
+    // Xray or TUN failure, a fail-closed deadline arm - took protection away
+    // without being asked, and must say so. isRunning is read before cleanup()
+    // clears it, which is also what keeps a failed connect silent: it never had
+    // a live tunnel to interrupt.
+    private fun stopAll(
+        confirmationToken: String = currentConfig?.RUNTIME_TOKEN.orEmpty(),
+        userRequested: Boolean = false,
+    ) {
         if (shuttingDownIntentionally) return
+        val alertUser = isRunning && !userRequested
         shuttingDownIntentionally = true
         cleanup(clearDeadline = true)
         currentConfig = null
         XrayCoreManager.stopCore(this, confirmationToken)
         stopForeground(true)
         stopSelf()
+        if (alertUser) RevoltAlerts.postDisconnected(this)
     }
 
     private fun armSessionDeadline(config: XrayConfig, remainingSeconds: Long) {
@@ -482,7 +493,7 @@ class XrayVPNService : VpnService() {
         // cancelled here - Dart re-pushes the same deadline every 60 s with no
         // dedupe, so cancelling on this branch would reliably delete the armed
         // warning on the first sync after it came due and never re-arm it.
-        if (warnAt <= System.currentTimeMillis()) return
+        if (warnAt <= System.currentTimeMillis() + WARNING_REARM_GRACE_MS) return
 
         cancelSessionWarningAlarm()
         // More than the lead away, so any warning on screen belongs to an older
@@ -523,7 +534,12 @@ class XrayVPNService : VpnService() {
 
         val deadline = sessionDeadlineElapsed ?: return
         val remaining = deadline - SystemClock.elapsedRealtime()
-        if (remaining <= 0L || remaining > RevoltAlerts.WARNING_LEAD_MS + WARNING_SLACK_MS) {
+        if (remaining < WARNING_FLOOR_MS ||
+            remaining > RevoltAlerts.WARNING_LEAD_MS + WARNING_SLACK_MS
+        ) {
+            // Too late to be a five-minute warning, or for a deadline that has
+            // moved. Saying "5 minutes" with seconds left is worse than silence;
+            // the disconnected alert follows either way.
             Log.w(TAG, "Ignoring session warning outside the warning window")
             return
         }
@@ -553,10 +569,6 @@ class XrayVPNService : VpnService() {
         }
         Log.w(TAG, "Native session deadline expired; stopping runtime fail-closed")
         stopAll(token)
-        // Only the deadline paths post this natively. A STOP_SERVICE command
-        // cannot tell a user tap from a Dart-side session end, so Dart posts for
-        // its own reasons; the shared id means a double post just replaces.
-        RevoltAlerts.postDisconnected(this)
     }
 
     private fun updateSessionDeadline(intent: Intent) {
@@ -646,8 +658,9 @@ class XrayVPNService : VpnService() {
             RevoltAlerts.cancelExpiryWarning(this)
             stopForeground(true)
             stopSelf()
+            // This arm does not go through stopAll, so it posts for itself.
+            RevoltAlerts.postDisconnected(this)
         }
-        RevoltAlerts.postDisconnected(this)
     }
 
     private fun scheduleSessionExpiryAlarm(runtimeToken: String, expiresAtEpochMs: Long): Boolean {
@@ -745,7 +758,7 @@ class XrayVPNService : VpnService() {
     }
 
     override fun onRevoke() {
-        stopAll()
+        stopAll(userRequested = true)
         super.onRevoke()
     }
 
@@ -804,5 +817,10 @@ class XrayVPNService : VpnService() {
         // An idle-capable alarm can run late; accept that much drift before
         // treating a warning as belonging to a deadline that has moved.
         private const val WARNING_SLACK_MS = 60_000L
+        // Don't re-arm (and so re-post) for a deadline that only moved by the
+        // jitter in a network round trip.
+        private const val WARNING_REARM_GRACE_MS = 15_000L
+        // Below this the warning has lost its point; stay quiet instead.
+        private const val WARNING_FLOOR_MS = 60_000L
     }
 }

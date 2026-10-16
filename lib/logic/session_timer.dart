@@ -256,9 +256,10 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   // endedMessage is the one sentence the UI shows after an end the user did
-  // not ask for, and its presence is also what posts the "not protected"
-  // notification. Both exist so nobody is left on their real IP without being
-  // told. A user-requested disconnect passes nothing.
+  // not ask for; postAlert independently decides whether to raise the "not
+  // protected" notification, which the native service already posts for every
+  // stop it sees. Both exist so nobody is left on their real IP without being
+  // told. A user-requested disconnect passes neither.
   Future<void> _doDisconnect(
     String reason, {
     String? endedMessage,
