@@ -270,6 +270,10 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
 
     await vpnConnection.disconnect();
+    // After the service is down, so the cancel is not swallowed by a still
+    // foreground notification. Without it a revoke leaves the countdown on
+    // screen, frozen, claiming a session that no longer protects anything.
+    await NotificationService.cancelTimer();
     if (endedMessage != null && postAlert) {
       unawaited(NotificationService.showDisconnectedAlert());
     }

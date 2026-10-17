@@ -75,6 +75,18 @@ class MainActivity : FlutterActivity() {
                         RevoltAlerts.postDisconnected(this)
                         result.success(null)
                     }
+                    // The countdown re-post is ongoing and non-dismissible, so
+                    // whoever posted it last has to take it down. A tick that
+                    // lands after the service cancelled its own foreground
+                    // notification otherwise strands a frozen countdown that
+                    // claims a protected session forever. Harmless while the
+                    // service is still in the foreground - the platform keeps
+                    // its notification regardless.
+                    "cancelNotification" -> {
+                        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                            .cancel(NOTIFICATION_ID)
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
