@@ -131,4 +131,22 @@ void main() {
       reason: 'exactly one call site',
     );
   });
+
+  test('SOCKS5 Reconnect re-attaches instead of handing the session back', () {
+    final timer = File('lib/logic/session_timer.dart').readAsStringSync();
+    final mode =
+        File('lib/screens/settings/in_settings/connection_mode.dart')
+            .readAsStringSync();
+
+    // Reconnect repairs an orphaned proxy by re-attaching to the session the
+    // device already holds. Releasing it on the way out would destroy the very
+    // session the follow-up connect(resume: true) then asks for.
+    expect(timer, contains('bool release = true'));
+    expect(timer, contains('if (release) unawaited(HivemindService.releaseSession())'));
+    expect(mode, contains('timer.disconnect(release: false)'));
+    expect(mode, contains('vpn.connect(resume: true)'));
+
+    // And it must not hand back a second support top-up for the same session.
+    expect(mode, contains('timer.start(resetSupportClaim: false)'));
+  });
 }

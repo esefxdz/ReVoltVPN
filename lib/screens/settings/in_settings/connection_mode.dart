@@ -76,7 +76,7 @@ class _ConnectionModeTileState extends State<ConnectionModeTile> {
 
     setState(() => _reconnecting = true);
     try {
-      await timer.disconnect();
+      await timer.disconnect(release: false);
       if (!mounted) return;
       if (await vpn.connect(resume: true)) {
         if (!mounted) return;

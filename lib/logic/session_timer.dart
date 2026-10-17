@@ -240,11 +240,17 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<void> disconnect({String reason = 'User requested'}) async {
+  // release is false when the caller intends to re-attach to the same session,
+  // as the SOCKS5 Reconnect does: handing it back here would destroy the very
+  // session the follow-up connect(resume: true) is about to ask for.
+  Future<void> disconnect({
+    String reason = 'User requested',
+    bool release = true,
+  }) async {
     // Only here, not in _doDisconnect: this is the one path the user actually
     // asked for. Unawaited so a slow or unreachable API never holds up the
     // teardown.
-    unawaited(HivemindService.releaseSession());
+    if (release) unawaited(HivemindService.releaseSession());
     await _doDisconnect(reason);
   }
 
