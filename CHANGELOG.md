@@ -8,9 +8,11 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 ## [Unreleased]
 
 ### Added
-- **Five-minute warning before a session ends.** The VPN service schedules it
-  off the same deadline it already enforces, so the warning still arrives when
-  the app is closed, and a support top-up moves it with the deadline.
+- **A warning before a session ends.** The VPN service schedules it off the same
+  deadline it already enforces, so it still arrives when the app is closed, and
+  a support top-up moves it with the deadline. It does not promise an exact
+  number of minutes: on a sleeping phone Android may hold it back, and the app
+  would rather say "soon" than say "5 minutes" with one left.
 - **"Disconnected — not protected" notification** when a session ends without
   you asking: the 2-hour expiry, the data limit, the server ending the
   session, or the tunnel stopping unexpectedly.
@@ -38,6 +40,22 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 - **SOCKS5 "Reconnect" re-attaches to the current session** instead of
   requesting a new one, so repairing a lost proxy no longer needs (or grants)
   a fresh session.
+- **The end-of-session warning now actually arrives when the app is closed.**
+  It was scheduled only on an inexact alarm, and a sleeping phone could hold
+  that alarm back past the end of the session it was warning about — so in the
+  one case the warning exists for, it never came. It now also runs off the VPN
+  service's own timer, the same one that already ends the session on time.
+- **Disconnecting from Android's VPN settings no longer leaves a countdown in
+  the notification shade.** It used to sit there frozen, showing time remaining
+  on a tunnel that was already gone.
+- **The VPN reconnects itself after the tunnel core stops.** Recovery never
+  worked: every attempt failed on the same internal error, and each one left
+  another copy of the core running in the background. One restart now brings it
+  back without dropping the connection.
+- **Disconnecting now releases your session on the server** instead of leaving
+  it open until it expires on its own.
+- **A core that fails to start now says why.** Its output was being thrown
+  away, so the only trace was an exit code.
 
 ---
 
