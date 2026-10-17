@@ -45,6 +45,14 @@ class XrayVPNService : VpnService() {
     private var sessionDeadlineToken: String? = null
     private val sessionDeadlineRunnable = Runnable { enforceSessionDeadline() }
 
+    // The warning's own backstop, mirroring the deadline's. The alarm alone is
+    // not enough: it is inexact on purpose (no SCHEDULE_EXACT_ALARM), and with
+    // the app closed on a dozing device it was measured never arriving at all,
+    // while the deadline's Handler fired within a second of its target.
+    private val sessionWarningRunnable = Runnable {
+        handleSessionWarningAlarm(sessionDeadlineToken.orEmpty())
+    }
+
     override fun onCreate() {
         super.onCreate()
     }
@@ -505,6 +513,17 @@ class XrayVPNService : VpnService() {
         } catch (e: Exception) {
             Log.w(TAG, "Failed to schedule session-expiry warning", e)
         }
+
+        // postDelayed runs on uptimeMillis, so a truly suspended device still
+        // fires this late - handleSessionWarningAlarm then rejects it on the
+        // window check rather than claiming "5 minutes" with seconds left.
+        // Whenever the process is merely backgrounded, which is the common
+        // case, this is what actually delivers the warning.
+        val warnDelay = warnAt - System.currentTimeMillis()
+        deadlineHandler.removeCallbacks(sessionWarningRunnable)
+        if (warnDelay > 0L) {
+            deadlineHandler.postDelayed(sessionWarningRunnable, warnDelay)
+        }
     }
 
     private fun handleSessionWarningAlarm(alarmToken: String) {
@@ -691,6 +710,7 @@ class XrayVPNService : VpnService() {
     }
 
     private fun cancelSessionWarningAlarm() {
+        deadlineHandler.removeCallbacks(sessionWarningRunnable)
         try {
             val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
             // Look it up rather than build it: FLAG_UPDATE_CURRENT would
