@@ -197,18 +197,6 @@ class HivemindService {
     throw Exception('Session not activated. Server callback may have timed out.');
   }
 
-  static Future<bool> checkHealth() async {
-    try {
-      final response = await controlGet(
-        _publicUrl('/health'),
-        timeout: const Duration(seconds: 3),
-      );
-      return response.statusCode == 200;
-    } catch (_) {
-      return false;
-    }
-  }
-
   static String newNonce() {
     final random = Random.secure();
     final high = random.nextInt(0x7FFFFFFF);

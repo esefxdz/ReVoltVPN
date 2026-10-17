@@ -49,15 +49,14 @@ class StatusBar extends StatelessWidget {
       builder: (context, vpn, timer, _) {
         final isConnected = vpn.status == VpnStatus.connected;
         final isConnecting = vpn.status == VpnStatus.connecting;
-        final serverHealthy =
-            vpn.serverReachable || (isConnected && timer.hasSyncedOnce);
-        final sessionOrTunnelHealthy = timer.hasSyncedOnce || vpn.serverReachable;
+        // Rule 60: reachability is known only from a session sync that
+        // succeeded, never from a probe. While disconnected the app knows
+        // nothing about the server, so it claims nothing either way.
+        final serverHealthy = isConnected && timer.hasSyncedOnce;
 
         final statusLabel = isConnected
-            ? (sessionOrTunnelHealthy ? 'Online' : 'Syncing…')
-            : (isConnecting
-                ? 'Connecting…'
-                : (vpn.serverReachable ? 'Ready' : 'Offline'));
+            ? (timer.hasSyncedOnce ? 'Online' : 'Syncing…')
+            : (isConnecting ? 'Connecting…' : 'Ready');
 
         final detail = _detail(vpn, timer);
 

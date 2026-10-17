@@ -38,9 +38,6 @@ class VpnConnection extends ChangeNotifier {
   bool _adoptedRunningRuntime = false;
   bool get adoptedRunningRuntime => _adoptedRunningRuntime;
 
-  bool _serverReachable = false;
-  bool get serverReachable => _serverReachable;
-
   ConnectionMode _activeMode = ConnectionMode.tun;
   ConnectionMode get activeMode => _activeMode;
 
@@ -73,7 +70,6 @@ class VpnConnection extends ChangeNotifier {
     );
   }
 
-  Timer? _healthTimer;
   StreamSubscription<NetworkSnapshot>? _networkSubscription;
 
   SecureSocksSession? _lastSecureSocks;
@@ -141,11 +137,6 @@ class VpnConnection extends ChangeNotifier {
         debugPrint('[VPN] Network monitor error: $error');
       },
     );
-
-    unawaited(_checkHealth());
-    _healthTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      unawaited(_checkHealth());
-    });
 
     try {
       final coreVersion = await _vless.getCoreVersion();
@@ -472,14 +463,6 @@ class VpnConnection extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _checkHealth() async {
-    if (_disposed || _status == VpnStatus.connected) return;
-    final reachable = await HivemindService.checkHealth();
-    if (_disposed || _status == VpnStatus.connected) return;
-    _serverReachable = reachable;
-    notifyListeners();
-  }
-
   @override
   void dispose() {
     _disposed = true;
@@ -487,7 +470,6 @@ class VpnConnection extends ChangeNotifier {
     _suppressNativeConnect = true;
     _userDisconnecting = true;
     HivemindService.cancel();
-    _healthTimer?.cancel();
     _networkSubscription?.cancel();
     // Provider/UI disposal is not a user disconnect command. Keeping teardown
     // in disconnect() prevents lifecycle churn from silently dropping the VPN.

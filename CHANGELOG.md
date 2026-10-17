@@ -5,6 +5,19 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 
 ---
 
+## [Unreleased]
+
+### Removed
+- **The background server check while disconnected.** The app no longer contacts
+  the server every 30 seconds while you are not connected to it. Nothing about
+  the connected session changes.
+
+### Changed
+- **The status bar no longer guesses whether the server is up.** It reads
+  "Ready" while disconnected and shows "Online" once a session has synced, so a
+  green dot now means a session that is actually working rather than a
+  reachability check made beforehand.
+
 ## [3.3.8] — 2026-10-17
 
 ### Changed

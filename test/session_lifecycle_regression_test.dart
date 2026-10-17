@@ -164,4 +164,24 @@ void main() {
       reason: 'the nonce check must not be skippable',
     );
   });
+
+  test('nothing probes the control plane while disconnected - rule 60', () {
+    final vpn = File('lib/logic/vpn_connection.dart').readAsStringSync();
+    final hivemind = File('lib/logic/hivemind_service.dart').readAsStringSync();
+    final bar = File('lib/components/status_bar.dart').readAsStringSync();
+
+    // The runtime excludes the app from its own tunnel
+    // (XrayVPNService.kt addDisallowedApplication), so a periodic /health probe
+    // was a cleartext-SNI metronome to the API host - which resolves to the
+    // tunnel IP. It fed step 1 of the kill chain in KNOWN_SECURITY_ISSUES #3,
+    // in exchange for a green dot before the user had connected to anything.
+    expect(vpn, isNot(contains('_healthTimer')));
+    expect(vpn, isNot(contains('_checkHealth')));
+    expect(hivemind, isNot(contains('checkHealth')));
+    expect(hivemind, isNot(contains("'/health'")));
+
+    // Reachability is passive now: a session sync that succeeded, nothing else.
+    expect(bar, isNot(contains('serverReachable')));
+    expect(bar, contains('isConnected && timer.hasSyncedOnce'));
+  });
 }
