@@ -27,12 +27,19 @@ object RevoltAlerts {
     private const val TAG = "RevoltAlerts"
     private const val LAUNCH_REQUEST_CODE = 2001
 
+    // Neither line names a number or a mechanism, because this notification
+    // cannot honour either. The caller accepts it anywhere from WARNING_FLOOR_MS
+    // to WARNING_LEAD_MS + WARNING_SLACK_MS remaining, so "5 minutes" can be
+    // off by four of them; and "watch an ad" is a dead end in a release build,
+    // where the support bypass is still kDebugMode-gated (rule 87). Put the
+    // number back once the warning is punctual, and the ad back once the
+    // support button works without a debug build.
     fun postExpiryWarning(context: Context) {
         post(
             context,
             WARNING_NOTIFICATION_ID,
-            "Revolt VPN disconnects in 5 minutes",
-            "Watch an ad to extend your session.",
+            "Revolt VPN disconnects soon",
+            "Open the app to extend your session.",
         )
     }
 
