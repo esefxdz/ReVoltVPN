@@ -39,6 +39,13 @@ object XrayCoreManager {
 
     private const val NOTIFICATION_ID = 1
     private const val TAG = "XrayCoreManager"
+
+    // The core's output is kept only for its first seconds, and only to explain
+    // a non-zero exit. A core that has been up longer than this may be carrying
+    // traffic, and its log can name destinations, which must never reach the
+    // device log (rule 95) - so past the window the buffer is dropped.
+    private const val STARTUP_LOG_WINDOW_MS = 10_000L
+    private const val STARTUP_LOG_MAX_LINES = 40
     private var xrayProcess: Process? = null
     private var countDownTimer: CountDownTimer? = null
     private var seconds = 0
@@ -349,12 +356,29 @@ object XrayCoreManager {
             // Monitor process in a separate thread to detect crash
             Thread {
                 try {
+                    val startedAt = System.currentTimeMillis()
+                    val startupLog = ArrayDeque<String>()
                     process.inputStream.bufferedReader().use { reader ->
-                        reader.forEachLine { _ -> }
+                        reader.forEachLine { line ->
+                            if (System.currentTimeMillis() - startedAt <= STARTUP_LOG_WINDOW_MS) {
+                                if (startupLog.size >= STARTUP_LOG_MAX_LINES) startupLog.removeFirst()
+                                startupLog.addLast(line)
+                            } else if (startupLog.isNotEmpty()) {
+                                startupLog.clear()
+                            }
+                        }
                     }
-                    
+
                     val exitCode = process.waitFor()
-                    Log.e(TAG, "Xray process exited with code $exitCode")
+                    if (exitCode != 0 && startupLog.isNotEmpty()) {
+                        Log.e(
+                            TAG,
+                            "Xray process exited with code $exitCode; startup output:\n" +
+                                startupLog.joinToString("\n")
+                        )
+                    } else {
+                        Log.e(TAG, "Xray process exited with code $exitCode")
+                    }
                     if (xrayProcess === process &&
                         AppConfigs.V2RAY_CONFIG?.RUNTIME_TOKEN == config.RUNTIME_TOKEN &&
                         (AppConfigs.V2RAY_STATE == AppConfigs.V2RAY_STATES.V2RAY_CONNECTED ||
