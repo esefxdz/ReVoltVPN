@@ -11,6 +11,8 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.CountDownTimer
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -383,6 +385,18 @@ object XrayCoreManager {
 
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start Xray process", e)
+            // The process may already be running: pb.start() succeeds before
+            // anything below it can throw. Leaving it alive leaked one live
+            // core per recovery attempt. Clear the field BEFORE destroying so
+            // the monitor thread's `xrayProcess === process` guard fails and
+            // recovery is not re-entered for a core we are killing here.
+            val orphan = xrayProcess
+            xrayProcess = null
+            try {
+                orphan?.destroy()
+            } catch (destroyError: Exception) {
+                Log.w(TAG, "Failed to destroy partially started Xray process", destroyError)
+            }
             deleteEphemeralConfigOnFailure(configFilesDir)
             return false
         }
@@ -429,7 +443,25 @@ object XrayCoreManager {
                AppConfigs.V2RAY_STATE == AppConfigs.V2RAY_STATES.V2RAY_CONNECTING
     }
 
+    // CountDownTimer builds a Handler, so it only constructs on a looper thread.
+    // Core recovery runs on a bare Thread (XrayVPNService.handleXrayCoreExit),
+    // where this threw "Can't create handler inside thread ... that has not
+    // called Looper.prepare()" and took the whole restart down with it.
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun runOnMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) block() else mainHandler.post(block)
+    }
+
     private fun startTimer(context: Context) {
+        // Captured now: a stop that lands while the post is queued must not
+        // leave a timer ticking for a generation that is already gone.
+        val token = AppConfigs.V2RAY_CONFIG?.RUNTIME_TOKEN
+        runOnMain { startTimerOnMain(context, token) }
+    }
+
+    private fun startTimerOnMain(context: Context, token: String?) {
+        if (AppConfigs.V2RAY_CONFIG?.RUNTIME_TOKEN != token) return
         countDownTimer?.cancel()
         seconds = 0
         countDownTimer = object : CountDownTimer(Long.MAX_VALUE, 1000) {
@@ -454,9 +486,11 @@ object XrayCoreManager {
     }
 
     private fun stopTimer() {
-        countDownTimer?.cancel()
-        countDownTimer = null
-        seconds = 0
+        runOnMain {
+            countDownTimer?.cancel()
+            countDownTimer = null
+            seconds = 0
+        }
     }
 
     fun sendStatusBroadcast(context: Context, config: XrayConfig) {
