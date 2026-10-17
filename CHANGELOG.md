@@ -5,7 +5,7 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 
 ---
 
-## [Unreleased]
+## [3.3.7] — 2026-10-17
 
 ### Added
 - **A warning before a session ends.** The VPN service schedules it off the same
