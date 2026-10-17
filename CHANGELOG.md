@@ -5,9 +5,24 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 
 ---
 
+## [3.3.8] — 2026-10-17
+
+### Changed
+- **Reconnecting always starts a fresh session.** In SOCKS5 mode, the
+  **Reconnect** button used to re-attach to the session you already had. It now
+  ends that session and starts a new one, exactly as the connect button does —
+  one way to begin a session instead of two, and you get a full window back
+  rather than the remainder of a broken one.
+
+### Fixed
+- **SOCKS5 "Reconnect" works again.** In 3.3.7 it ended your session and then
+  asked for the session it had just ended, failing with "Session not activated".
+
+---
+
 ## [3.3.7] — 2026-10-17
 
-> **Known issue — fixed in the next release.** In SOCKS5 mode, the **Reconnect**
+> **Known issue — fixed in 3.3.8.** In SOCKS5 mode, the **Reconnect**
 > button in Settings ends your session instead of re-attaching to it, and then
 > fails with "Session not activated". It only appears when a proxy session has
 > been orphaned, and you lose the rest of that session rather than anything

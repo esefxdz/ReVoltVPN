@@ -116,7 +116,7 @@ void main() {
     // /session/stop takes a device_id as its only proof of ownership, so it
     // must never be reachable from an error path. disconnect() is called only
     // by the connect button; _doDisconnect is every other ending.
-    final disconnectEntry = timer.indexOf('Future<void> disconnect(');
+    final disconnectEntry = timer.indexOf('Future<void> disconnect({');
     final doDisconnect = timer.indexOf('Future<void> _doDisconnect(');
     final release = timer.indexOf('HivemindService.releaseSession()');
     expect(release, greaterThan(disconnectEntry));
@@ -132,21 +132,36 @@ void main() {
     );
   });
 
-  test('SOCKS5 Reconnect re-attaches instead of handing the session back', () {
-    final timer = File('lib/logic/session_timer.dart').readAsStringSync();
+  test('every session starts the same way - no re-attach path', () {
     final mode =
         File('lib/screens/settings/in_settings/connection_mode.dart')
             .readAsStringSync();
+    final hivemind = File('lib/logic/hivemind_service.dart').readAsStringSync();
+    final vpn = File('lib/logic/vpn_connection.dart').readAsStringSync();
+    final timer = File('lib/logic/session_timer.dart').readAsStringSync();
 
-    // Reconnect repairs an orphaned proxy by re-attaching to the session the
-    // device already holds. Releasing it on the way out would destroy the very
-    // session the follow-up connect(resume: true) then asks for.
-    expect(timer, contains('bool release = true'));
-    expect(timer, contains('if (release) unawaited(HivemindService.releaseSession())'));
-    expect(mode, contains('timer.disconnect(release: false)'));
-    expect(mode, contains('vpn.connect(resume: true)'));
+    // SOCKS5 Reconnect used to re-attach to the session already held. It was
+    // the only place a session began without an ad and without a nonce binding
+    // it, and it needed three parameters and a carve-out in rule 4 to support.
+    // Reconnect now ends the session and starts a fresh one, like the button.
+    expect(mode, contains("ad.showAd('main')"));
+    expect(mode, contains('vpn.connect(adNonce: adNonce)'));
+    expect(mode, isNot(contains('resume: true')));
+    expect(mode, isNot(contains('release: false')));
+    expect(mode, isNot(contains('resetSupportClaim')));
 
-    // And it must not hand back a second support top-up for the same session.
-    expect(mode, contains('timer.start(resetSupportClaim: false)'));
+    // The special cases that only existed for it are gone.
+    expect(hivemind, isNot(contains('bool resume')));
+    expect(vpn, isNot(contains('bool resume')));
+    expect(timer, isNot(contains('bool release')));
+    expect(timer, isNot(contains('resetSupportClaim')));
+
+    // So the nonce is now unconditional: no path accepts whatever the server
+    // happens to hold.
+    expect(
+      hivemind,
+      contains('if (serverNonce is! String || serverNonce != nonce) return null;'),
+      reason: 'the nonce check must not be skippable',
+    );
   });
 }

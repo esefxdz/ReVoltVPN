@@ -158,9 +158,7 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  // resetSupportClaim is false when re-attaching to a session already held:
-  // the top-up is once per server session and this flag is what enforces it.
-  Future<void> start({bool resetSupportClaim = true}) async {
+  Future<void> start() async {
     _sessionEpoch++;
     _remainingSeconds = 0;
     _remainingAtLastSync = 0;
@@ -178,12 +176,11 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     _lastEndMessage = null;
     NotificationService.reset();
 
-    if (resetSupportClaim) {
-      _supportStateEpoch++;
-      _supportRewardClaimed = false;
-      _supportRewardStateLoaded = true;
-      unawaited(_persistSupportRewardState(false));
-    }
+    // Every session is new, so the once-per-session top-up resets with it.
+    _supportStateEpoch++;
+    _supportRewardClaimed = false;
+    _supportRewardStateLoaded = true;
+    unawaited(_persistSupportRewardState(false));
 
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), _tick);
@@ -240,17 +237,11 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  // release is false when the caller intends to re-attach to the same session,
-  // as the SOCKS5 Reconnect does: handing it back here would destroy the very
-  // session the follow-up connect(resume: true) is about to ask for.
-  Future<void> disconnect({
-    String reason = 'User requested',
-    bool release = true,
-  }) async {
+  Future<void> disconnect({String reason = 'User requested'}) async {
     // Only here, not in _doDisconnect: this is the one path the user actually
     // asked for. Unawaited so a slow or unreachable API never holds up the
     // teardown.
-    if (release) unawaited(HivemindService.releaseSession());
+    unawaited(HivemindService.releaseSession());
     await _doDisconnect(reason);
   }
 

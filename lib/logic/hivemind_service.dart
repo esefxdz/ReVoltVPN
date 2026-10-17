@@ -146,14 +146,13 @@ class HivemindService {
     _expectedNonce = null;
   }
 
-  // Fetches this device's VLESS URL.
-  //   adNonce — wait for the session that ad created (SSV can lag, so poll longer)
-  //   resume  — re-attach to the session already held; any nonce accepted
-  //   neither — ads off: mint a nonce and fire the bypass (rule 87)
+  // Fetches this device's VLESS URL. Every session starts the same way, so
+  // there is always a nonce to bind it to: either the one the ad minted, or one
+  // we mint here before firing the bypass (rule 87). The re-attach path that
+  // used to accept any nonce is gone - see rule 4.
   static Future<String> fetchConfigDirectly({
     void Function(int attempt, int total)? onAttempt,
     String? adNonce,
-    bool resume = false,
   }) async {
     // Capture the generation before the first await. Otherwise a disconnect
     // that lands while secure storage is resolving the device ID can be lost
@@ -162,11 +161,11 @@ class HivemindService {
     final deviceId = await CryptoService.getDeviceId();
     _throwIfCancelled(callId);
 
-    final nonce = resume ? null : (adNonce ?? newNonce());
+    final nonce = adNonce ?? newNonce();
     _expectedNonce = nonce;
 
-    if (!resume && adNonce == null) {
-      await _runConfiguredBypass(deviceId, nonce!);
+    if (adNonce == null) {
+      await _runConfiguredBypass(deviceId, nonce);
       _throwIfCancelled(callId);
     }
 
@@ -229,10 +228,9 @@ class HivemindService {
     }
   }
 
-  // nonce == null accepts whatever nonce the server holds (resume path).
   static Future<_HivemindSessionConfig?> _fetchActiveSession(
     String deviceId,
-    String? nonce,
+    String nonce,
   ) async {
     final statusUri = _publicUrl('/session/status').replace(
       queryParameters: {'device_id': deviceId},
@@ -245,9 +243,7 @@ class HivemindService {
 
     final serverNonce = decoded['nonce'];
     if (_expectedNonce != nonce) return null;
-    if (nonce != null && (serverNonce is! String || serverNonce != nonce)) {
-      return null;
-    }
+    if (serverNonce is! String || serverNonce != nonce) return null;
 
     if (decoded['active'] != true || decoded['vless_uuid'] == null) {
       return null;

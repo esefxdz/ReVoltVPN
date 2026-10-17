@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:revoltvpn/logic/ad_manager.dart';
 import 'package:revoltvpn/logic/app_colors.dart';
 import 'package:revoltvpn/logic/connection_settings.dart';
 import 'package:revoltvpn/logic/local_socks_tester.dart';
@@ -67,20 +68,27 @@ class _ConnectionModeTileState extends State<ConnectionModeTile> {
     widget.onChanged?.call(next);
   }
 
-  // Recovers an orphaned proxy: tear the runtime down and re-attach to the
-  // session already held. No ad, no new session.
+  // Recovers an orphaned proxy by ending the session and starting a new one,
+  // exactly as the connect button does. Re-attaching to the session already
+  // held was the one place a session began without an ad and without a nonce
+  // to bind it to; a fresh one is the same path everywhere and hands back a
+  // full window rather than the remainder of a broken one.
   Future<void> _reconnect() async {
     if (_reconnecting) return;
     final vpn = context.read<VpnConnection>();
     final timer = context.read<SessionTimer>();
+    final ad = context.read<AdManager>();
 
     setState(() => _reconnecting = true);
     try {
-      await timer.disconnect(release: false);
+      await timer.disconnect();
       if (!mounted) return;
-      if (await vpn.connect(resume: true)) {
+      final adNonce = await ad.showAd('main');
+      if (adNonce == null && AdManager.adsEnabled) return;
+      if (!mounted) return;
+      if (await vpn.connect(adNonce: adNonce)) {
         if (!mounted) return;
-        await timer.start(resetSupportClaim: false);
+        await timer.start();
       }
     } finally {
       if (mounted) {
