@@ -5,6 +5,60 @@ Versions follow [semver](https://semver.org/): MAJOR.MINOR.PATCH
 
 ---
 
+## [3.3.7] — 2026-10-17
+
+### Added
+- **A warning before a session ends.** The VPN service schedules it off the same
+  deadline it already enforces, so it still arrives when the app is closed, and
+  a support top-up moves it with the deadline. It does not promise an exact
+  number of minutes: on a sleeping phone Android may hold it back, and the app
+  would rather say "soon" than say "5 minutes" with one left.
+- **"Disconnected — not protected" notification** when a session ends without
+  you asking: the 2-hour expiry, the data limit, the server ending the
+  session, or the tunnel stopping unexpectedly.
+- **SOCKS5 mode now asks for the notification permission.** It never did,
+  because it never raises the VPN consent dialog, so on Android 13+ these
+  alerts would have been dropped before they were shown.
+- **The app now shows what went wrong.** Connect errors, the reason a session
+  ended, and progress while connecting appear under the status bar instead of
+  the button silently going back to idle.
+
+### Changed
+- **A control-plane outage no longer tears down a working tunnel.** The app used
+  to disconnect itself after about two minutes of failed status polls, putting
+  you back on your real IP; it now keeps the tunnel up and shows
+  "Can't reach the server — still connected". Expiry is still enforced by the
+  VPN service's own deadline and by the server.
+
+### Fixed
+- **Rewarded ads no longer break connecting.** With ads enabled, the ad's
+  server-side-verification nonce and the nonce the connect flow waited for were
+  minted separately, so the client rejected the very session the ad created and
+  failed with "Session not activated". The ad's nonce is now passed through to
+  the connect call, the fake bypass callback is skipped when a real ad was
+  watched, and the client polls longer (~36 s) for Google's callback.
+- **SOCKS5 "Reconnect" re-attaches to the current session** instead of
+  requesting a new one, so repairing a lost proxy no longer needs (or grants)
+  a fresh session.
+- **The end-of-session warning now actually arrives when the app is closed.**
+  It was scheduled only on an inexact alarm, and a sleeping phone could hold
+  that alarm back past the end of the session it was warning about — so in the
+  one case the warning exists for, it never came. It now also runs off the VPN
+  service's own timer, the same one that already ends the session on time.
+- **Disconnecting from Android's VPN settings no longer leaves a countdown in
+  the notification shade.** It used to sit there frozen, showing time remaining
+  on a tunnel that was already gone.
+- **The VPN reconnects itself after the tunnel core stops.** Recovery never
+  worked: every attempt failed on the same internal error, and each one left
+  another copy of the core running in the background. One restart now brings it
+  back without dropping the connection.
+- **Disconnecting now releases your session on the server** instead of leaving
+  it open until it expires on its own.
+- **A core that fails to start now says why.** Its output was being thrown
+  away, so the only trace was an exit code.
+
+---
+
 ## [3.3.6] — 2026-10-08
 
 ### Fixed

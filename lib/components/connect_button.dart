@@ -95,10 +95,10 @@ class _ConnectButtonState extends State<ConnectButton>
 
     setState(() => _busy = true);
     try {
-      final adWatched = await ad.showAd('main');
-      if (!adWatched && AdManager.adsEnabled) return;
+      final adNonce = await ad.showAd('main');
+      if (adNonce == null && AdManager.adsEnabled) return;
 
-      final ok = await vpn.connect();
+      final ok = await vpn.connect(adNonce: adNonce);
       if (ok) {
         await timer.start();
         HapticSettings.success();

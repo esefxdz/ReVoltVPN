@@ -200,7 +200,7 @@ class VpnConnection extends ChangeNotifier {
     }
   }
 
-  Future<bool> connect({bool skipAdBypass = false}) async {
+  Future<bool> connect({String? adNonce, bool resume = false}) async {
     if (_disposed ||
         _userDisconnecting ||
         _status == VpnStatus.connected ||
@@ -222,6 +222,17 @@ class VpnConnection extends ChangeNotifier {
       _errorMessage = 'VPN service unavailable.';
       _setStatus(VpnStatus.error, 'Service unavailable');
       return false;
+    }
+
+    // Proxy mode skips requestPermission below (VPN consent it never needs),
+    // so it has to ask for POST_NOTIFICATIONS on its own.
+    if (!kIsWeb && _activeMode == ConnectionMode.proxy) {
+      try {
+        await _nativeControl.invokeMethod<void>('requestNotificationPermission');
+      } catch (e) {
+        debugPrint('[VPN] Notification permission request failed: $e');
+      }
+      if (!_isCurrentConnect(connectEpoch)) return false;
     }
 
     if (!kIsWeb && _activeMode == ConnectionMode.tun) {
@@ -254,7 +265,8 @@ class VpnConnection extends ChangeNotifier {
     String realUrl;
     try {
       realUrl = await HivemindService.fetchConfigDirectly(
-        skipAdBypass: skipAdBypass,
+        adNonce: adNonce,
+        resume: resume,
         onAttempt: (attempt, total) {
           if (!_isCurrentConnect(connectEpoch)) return;
           _setStatus(

@@ -31,7 +31,7 @@ class _SupportButtonState extends State<SupportButton> {
     setState(() => _busy = true);
 
     try {
-      final rewarded = await ad.showAd('support');
+      final rewarded = await ad.showAd('support') != null;
       if (rewarded) {
         await timer.markSupportRewardClaimed();
         await timer.syncNow();

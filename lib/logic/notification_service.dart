@@ -32,6 +32,30 @@ class NotificationService {
     }
   }
 
+  // Same id as the service's own alert, so a double post replaces.
+  static Future<void> showDisconnectedAlert() async {
+    try {
+      await _channel.invokeMethod<void>('showDisconnectedAlert');
+    } catch (_) {
+      // Informational only.
+    }
+  }
+
+  /// Takes down the countdown notification.
+  ///
+  /// [updateTimer] re-posts an ongoing, non-dismissible notification, so a tick
+  /// that lands after the VPN service has cancelled its own foreground copy
+  /// leaves a frozen countdown on screen that nobody owns. Call this once the
+  /// tunnel is actually down.
+  static Future<void> cancelTimer() async {
+    _lastText = null;
+    try {
+      await _channel.invokeMethod<void>('cancelNotification');
+    } catch (_) {
+      // Cosmetic.
+    }
+  }
+
   /// Forces the next connect to re-post even if the countdown resumes on the
   /// same value.
   static void reset() => _lastText = null;

@@ -20,6 +20,7 @@ import android.os.VibratorManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.github.tfox.flutter_vless.xray.utils.RevoltAlerts
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -61,14 +62,32 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, notificationChannel)
             .setMethodCallHandler { call, result ->
-                if (call.method == "updateNotificationText") {
-                    val text = call.argument<String>("text") ?: ""
-                    val title = call.argument<String>("title") ?: "Revolt VPN"
-                    val action = call.argument<String>("disconnectLabel") ?: "Disconnect"
-                    updateVpnNotification(title, text, action)
-                    result.success(null)
-                } else {
-                    result.notImplemented()
+                when (call.method) {
+                    "updateNotificationText" -> {
+                        val text = call.argument<String>("text") ?: ""
+                        val title = call.argument<String>("title") ?: "Revolt VPN"
+                        val action = call.argument<String>("disconnectLabel") ?: "Disconnect"
+                        updateVpnNotification(title, text, action)
+                        result.success(null)
+                    }
+                    // Session ends only Dart sees; the service posts the rest.
+                    "showDisconnectedAlert" -> {
+                        RevoltAlerts.postDisconnected(this)
+                        result.success(null)
+                    }
+                    // The countdown re-post is ongoing and non-dismissible, so
+                    // whoever posted it last has to take it down. A tick that
+                    // lands after the service cancelled its own foreground
+                    // notification otherwise strands a frozen countdown that
+                    // claims a protected session forever. Harmless while the
+                    // service is still in the foreground - the platform keeps
+                    // its notification regardless.
+                    "cancelNotification" -> {
+                        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                            .cancel(NOTIFICATION_ID)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
                 }
             }
 

@@ -67,10 +67,8 @@ class _ConnectionModeTileState extends State<ConnectionModeTile> {
     widget.onChanged?.call(next);
   }
 
-  /// Recovers from an orphaned proxy: tear the runtime down and start a fresh
-  /// session so a readable set of credentials exists again. No rewarded ad —
-  /// the user is repairing a connection they already paid for, not opening a
-  /// new one.
+  // Recovers an orphaned proxy: tear the runtime down and re-attach to the
+  // session already held. No ad, no new session.
   Future<void> _reconnect() async {
     if (_reconnecting) return;
     final vpn = context.read<VpnConnection>();
@@ -80,9 +78,9 @@ class _ConnectionModeTileState extends State<ConnectionModeTile> {
     try {
       await timer.disconnect();
       if (!mounted) return;
-      if (await vpn.connect()) {
+      if (await vpn.connect(resume: true)) {
         if (!mounted) return;
-        await timer.start();
+        await timer.start(resetSupportClaim: false);
       }
     } finally {
       if (mounted) {

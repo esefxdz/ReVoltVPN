@@ -76,18 +76,84 @@ class HivemindService {
     }
   }
 
+  static Future<http.Response> controlPost(
+    Uri uri,
+    Map<String, dynamic> body, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final client = http.Client();
+    final request = http.Request('POST', uri)
+      ..headers['User-Agent'] = _ua
+      ..headers['Content-Type'] = 'application/json'
+      ..body = jsonEncode(body)
+      ..followRedirects = false;
+
+    Future<http.Response> send() async {
+      final streamed = await client.send(request);
+      final declaredLength = streamed.contentLength;
+      if (declaredLength != null && declaredLength > _maxControlResponseBytes) {
+        throw const FormatException('Control response is too large.');
+      }
+
+      final bytes = <int>[];
+      await for (final chunk in streamed.stream) {
+        if (bytes.length + chunk.length > _maxControlResponseBytes) {
+          throw const FormatException('Control response is too large.');
+        }
+        bytes.addAll(chunk);
+      }
+
+      return http.Response.bytes(bytes, streamed.statusCode,
+          headers: streamed.headers, request: request);
+    }
+
+    try {
+      return await send().timeout(
+        timeout,
+        onTimeout: () {
+          client.close();
+          throw TimeoutException('Control request timed out.', timeout);
+        },
+      );
+    } finally {
+      client.close();
+    }
+  }
+
+  // Hands the session back so the server can drop the VLESS client instead of
+  // leaving it provisioned until the window runs out.
+  //
+  // Only the user-initiated disconnect calls this. An expiry, a hard cap or a
+  // server-ended session is already gone server-side, and /session/stop takes
+  // nothing but a device_id as proof (hivemind/api.py notes this), so a
+  // transient client error must never be allowed to destroy a live session.
+  // Best effort throughout: the session expires on its own regardless.
+  static Future<void> releaseSession() async {
+    try {
+      final deviceId = await CryptoService.getDeviceId();
+      await controlPost(
+        _publicUrl('/session/stop'),
+        {'device_id': deviceId},
+        timeout: const Duration(seconds: 3),
+      );
+    } catch (_) {
+      // Nothing to recover: the server expires the session anyway.
+    }
+  }
+
   static void cancel() {
     _currentCallId++;
     _expectedNonce = null;
   }
 
-  static void setExpectedNonce(String nonce) {
-    _expectedNonce = nonce;
-  }
-
+  // Fetches this device's VLESS URL.
+  //   adNonce — wait for the session that ad created (SSV can lag, so poll longer)
+  //   resume  — re-attach to the session already held; any nonce accepted
+  //   neither — ads off: mint a nonce and fire the bypass (rule 87)
   static Future<String> fetchConfigDirectly({
     void Function(int attempt, int total)? onAttempt,
-    bool skipAdBypass = false,
+    String? adNonce,
+    bool resume = false,
   }) async {
     // Capture the generation before the first await. Otherwise a disconnect
     // that lands while secure storage is resolving the device ID can be lost
@@ -96,15 +162,15 @@ class HivemindService {
     final deviceId = await CryptoService.getDeviceId();
     _throwIfCancelled(callId);
 
-    final nonce = _newNonce();
+    final nonce = resume ? null : (adNonce ?? newNonce());
     _expectedNonce = nonce;
 
-    if (!skipAdBypass) {
-      await _runConfiguredBypass(deviceId, nonce);
+    if (!resume && adNonce == null) {
+      await _runConfiguredBypass(deviceId, nonce!);
       _throwIfCancelled(callId);
     }
 
-    const maxAttempts = 5;
+    final maxAttempts = adNonce != null ? 10 : 5;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       _throwIfCancelled(callId);
       onAttempt?.call(attempt, maxAttempts);
@@ -122,7 +188,9 @@ class HivemindService {
       }
 
       if (attempt < maxAttempts) {
-        await Future.delayed(_pollBackoff[attempt - 1]);
+        await Future.delayed(
+          _pollBackoff[min(attempt - 1, _pollBackoff.length - 1)],
+        );
         _throwIfCancelled(callId);
       }
     }
@@ -142,7 +210,7 @@ class HivemindService {
     }
   }
 
-  static String _newNonce() {
+  static String newNonce() {
     final random = Random.secure();
     final high = random.nextInt(0x7FFFFFFF);
     final low = random.nextInt(0x7FFFFFFF);
@@ -161,9 +229,10 @@ class HivemindService {
     }
   }
 
+  // nonce == null accepts whatever nonce the server holds (resume path).
   static Future<_HivemindSessionConfig?> _fetchActiveSession(
     String deviceId,
-    String nonce,
+    String? nonce,
   ) async {
     final statusUri = _publicUrl('/session/status').replace(
       queryParameters: {'device_id': deviceId},
@@ -175,9 +244,8 @@ class HivemindService {
     if (decoded is! Map<String, dynamic>) return null;
 
     final serverNonce = decoded['nonce'];
-    if (_expectedNonce != nonce ||
-        serverNonce is! String ||
-        serverNonce != nonce) {
+    if (_expectedNonce != nonce) return null;
+    if (nonce != null && (serverNonce is! String || serverNonce != nonce)) {
       return null;
     }
 

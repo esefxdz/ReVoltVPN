@@ -16,6 +16,7 @@ import android.util.Log
 import com.github.tfox.flutter_vless.xray.core.XrayCoreManager
 import com.github.tfox.flutter_vless.xray.dto.XrayConfig
 import com.github.tfox.flutter_vless.xray.utils.AppConfigs
+import com.github.tfox.flutter_vless.xray.utils.RevoltAlerts
 import org.json.JSONObject
 import java.io.File
 
@@ -44,6 +45,14 @@ class XrayVPNService : VpnService() {
     private var sessionDeadlineToken: String? = null
     private val sessionDeadlineRunnable = Runnable { enforceSessionDeadline() }
 
+    // The warning's own backstop, mirroring the deadline's. The alarm alone is
+    // not enough: it is inexact on purpose (no SCHEDULE_EXACT_ALARM), and with
+    // the app closed on a dozing device it was measured never arriving at all,
+    // while the deadline's Handler fired within a second of its target.
+    private val sessionWarningRunnable = Runnable {
+        handleSessionWarningAlarm(sessionDeadlineToken.orEmpty())
+    }
+
     override fun onCreate() {
         super.onCreate()
     }
@@ -66,6 +75,13 @@ class XrayVPNService : VpnService() {
             return START_NOT_STICKY
         }
 
+        // Must stay above the command dispatch: an intent with no COMMAND
+        // falls through to the final else and stops the tunnel.
+        if (intent.getBooleanExtra(EXTRA_SESSION_WARNING, false)) {
+            handleSessionWarningAlarm(intent.getStringExtra("RUNTIME_TOKEN").orEmpty())
+            return START_NOT_STICKY
+        }
+
         val command = if (Build.VERSION.SDK_INT >= 33) {
             intent.getSerializableExtra("COMMAND", AppConfigs.V2RAY_SERVICE_COMMANDS::class.java)
         } else {
@@ -82,7 +98,7 @@ class XrayVPNService : VpnService() {
                 Log.w(TAG, "Ignoring STOP_SERVICE without matching runtime generation")
                 return START_NOT_STICKY
             }
-            stopAll(requestedToken)
+            stopAll(requestedToken, userRequested = true)
             return START_NOT_STICKY
         }
 
@@ -121,6 +137,7 @@ class XrayVPNService : VpnService() {
                     XrayCoreManager.stopCore(this)
                 }
                 cleanup(clearDeadline = true)
+                RevoltAlerts.cancelAll(this)
                 shuttingDownIntentionally = false
                 currentConfig = config
 
@@ -418,14 +435,21 @@ class XrayVPNService : VpnService() {
         }
     }
 
-    private fun stopAll(confirmationToken: String = currentConfig?.RUNTIME_TOKEN.orEmpty()) {
+    // Anything that stops a live tunnel unasked must say so. isRunning is read
+    // before cleanup() clears it, which keeps a failed connect silent.
+    private fun stopAll(
+        confirmationToken: String = currentConfig?.RUNTIME_TOKEN.orEmpty(),
+        userRequested: Boolean = false,
+    ) {
         if (shuttingDownIntentionally) return
+        val alertUser = isRunning && !userRequested
         shuttingDownIntentionally = true
         cleanup(clearDeadline = true)
         currentConfig = null
         XrayCoreManager.stopCore(this, confirmationToken)
         stopForeground(true)
         stopSelf()
+        if (alertUser) RevoltAlerts.postDisconnected(this)
     }
 
     private fun armSessionDeadline(config: XrayConfig, remainingSeconds: Long) {
@@ -451,9 +475,81 @@ class XrayVPNService : VpnService() {
             return
         }
 
+        armExpiryWarning(config.RUNTIME_TOKEN, epochDeadline)
+
         deadlineHandler.removeCallbacks(sessionDeadlineRunnable)
         if (delayMs == 0L) deadlineHandler.post(sessionDeadlineRunnable)
         else deadlineHandler.postDelayed(sessionDeadlineRunnable, delayMs)
+    }
+
+    // Advisory, unlike the deadline itself: nothing here fails closed. Dart
+    // re-pushes the deadline every sync, so this runs about once a minute.
+    private fun armExpiryWarning(runtimeToken: String, expiresAtEpochMs: Long) {
+        if (runtimeToken.isEmpty()) return
+
+        val warnAt = expiresAtEpochMs - RevoltAlerts.WARNING_LEAD_MS
+        // Inside the window already (or the short bootstrap deadline). Cancel
+        // nothing here: with no dedupe on the re-push, cancelling on this
+        // branch deletes the armed warning and never re-arms it.
+        if (warnAt <= System.currentTimeMillis() + WARNING_REARM_GRACE_MS) return
+
+        cancelSessionWarningAlarm()
+        // A warning on screen now belongs to an older deadline (top-up).
+        RevoltAlerts.cancelExpiryWarning(this)
+
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val pendingIntent = sessionWarningPendingIntent(runtimeToken)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                // Inexact on purpose - keeps this off SCHEDULE_EXACT_ALARM.
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    warnAt,
+                    pendingIntent,
+                )
+            } else {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, warnAt, pendingIntent)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to schedule session-expiry warning", e)
+        }
+
+        // postDelayed runs on uptimeMillis, so a truly suspended device still
+        // fires this late - handleSessionWarningAlarm then rejects it on the
+        // window check rather than claiming "5 minutes" with seconds left.
+        // Whenever the process is merely backgrounded, which is the common
+        // case, this is what actually delivers the warning.
+        val warnDelay = warnAt - System.currentTimeMillis()
+        deadlineHandler.removeCallbacks(sessionWarningRunnable)
+        if (warnDelay > 0L) {
+            deadlineHandler.postDelayed(sessionWarningRunnable, warnDelay)
+        }
+    }
+
+    private fun handleSessionWarningAlarm(alarmToken: String) {
+        val config = currentConfig
+        if (config == null) {
+            // Woke a process with no live runtime; nothing to warn about.
+            stopSelf()
+            return
+        }
+        if (alarmToken.isEmpty() || alarmToken != config.RUNTIME_TOKEN) {
+            Log.w(TAG, "Ignoring session warning for stale runtime generation")
+            return
+        }
+
+        val deadline = sessionDeadlineElapsed ?: return
+        val remaining = deadline - SystemClock.elapsedRealtime()
+        if (remaining < WARNING_FLOOR_MS ||
+            remaining > RevoltAlerts.WARNING_LEAD_MS + WARNING_SLACK_MS
+        ) {
+            // Too late, or the deadline moved. Saying "5 minutes" with
+            // seconds left is worse than silence.
+            Log.w(TAG, "Ignoring session warning outside the warning window")
+            return
+        }
+
+        RevoltAlerts.postExpiryWarning(this)
     }
 
     private fun clearSessionDeadline() {
@@ -462,6 +558,8 @@ class XrayVPNService : VpnService() {
         sessionDeadlineToken = null
         clearPersistedDeadline()
         cancelSessionExpiryAlarm()
+        cancelSessionWarningAlarm()
+        RevoltAlerts.cancelExpiryWarning(this)
     }
 
     private fun enforceSessionDeadline() {
@@ -561,8 +659,12 @@ class XrayVPNService : VpnService() {
         } else {
             clearPersistedDeadline()
             cancelSessionExpiryAlarm()
+            cancelSessionWarningAlarm()
+            RevoltAlerts.cancelExpiryWarning(this)
             stopForeground(true)
             stopSelf()
+            // This arm does not go through stopAll, so it posts for itself.
+            RevoltAlerts.postDisconnected(this)
         }
     }
 
@@ -607,6 +709,37 @@ class XrayVPNService : VpnService() {
         }
     }
 
+    private fun cancelSessionWarningAlarm() {
+        deadlineHandler.removeCallbacks(sessionWarningRunnable)
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            // Look it up rather than build it: FLAG_UPDATE_CURRENT would
+            // rewrite the live alarm's RUNTIME_TOKEN to "" before cancelling.
+            existingSessionWarningPendingIntent()?.let { alarmManager.cancel(it) }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to cancel session-warning alarm", e)
+        }
+    }
+
+    private fun existingSessionWarningPendingIntent(): PendingIntent? {
+        val intent = Intent(this, XrayVPNService::class.java)
+            .putExtra(EXTRA_SESSION_WARNING, true)
+        val flags = PendingIntent.FLAG_NO_CREATE or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        return PendingIntent.getService(this, SESSION_WARNING_REQUEST_CODE, intent, flags)
+    }
+
+    // Identity is component + request code, not extras, so the warning needs
+    // its own code or it clobbers the expiry alarm.
+    private fun sessionWarningPendingIntent(runtimeToken: String): PendingIntent {
+        val intent = Intent(this, XrayVPNService::class.java)
+            .putExtra(EXTRA_SESSION_WARNING, true)
+            .putExtra("RUNTIME_TOKEN", runtimeToken)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        return PendingIntent.getService(this, SESSION_WARNING_REQUEST_CODE, intent, flags)
+    }
+
     private fun sessionExpiryPendingIntent(runtimeToken: String): PendingIntent {
         val intent = Intent(this, XrayVPNService::class.java)
             .putExtra(EXTRA_SESSION_EXPIRED, true)
@@ -628,7 +761,7 @@ class XrayVPNService : VpnService() {
     }
 
     override fun onRevoke() {
-        stopAll()
+        stopAll(userRequested = true)
         super.onRevoke()
     }
 
@@ -681,6 +814,14 @@ class XrayVPNService : VpnService() {
         private const val PREF_RUNTIME_TOKEN = "runtime_token"
         private const val PREF_EXPIRES_AT_MS = "expires_at_ms"
         private const val EXTRA_SESSION_EXPIRED = "SESSION_EXPIRED"
+        private const val EXTRA_SESSION_WARNING = "SESSION_WARNING"
         private const val SESSION_EXPIRY_REQUEST_CODE = 1001
+        private const val SESSION_WARNING_REQUEST_CODE = 1002
+        // Drift allowed before a warning is treated as belonging elsewhere.
+        private const val WARNING_SLACK_MS = 60_000L
+        // Don't re-arm for a deadline that moved by round-trip jitter alone.
+        private const val WARNING_REARM_GRACE_MS = 15_000L
+        // Below this the warning has lost its point.
+        private const val WARNING_FLOOR_MS = 60_000L
     }
 }

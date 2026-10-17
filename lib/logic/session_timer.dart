@@ -36,14 +36,15 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
   static const FlutterSecureStorage _supportStorage = FlutterSecureStorage();
 
   static const int _maxConsecutiveFailures = 3;
-  static const int _maxOfflineSeconds = 120;
-  int _offlineSeconds = 0;
 
   static const int _pollIntervalSeconds = 60;
   static const int _backgroundPollIntervalSeconds = 60;
 
   int _lastUsedBytes = 0;
   Stopwatch? _sinceLastSuccessfulSync;
+  // Wall clock, because the Stopwatch is CLOCK_MONOTONIC and stops across
+  // device suspend - exactly when the RTC_WAKEUP expiry alarm fires.
+  DateTime? _deadlineAt;
   double _currentSpeedKBps = 0.0;
 
   SessionTimer({required this.vpnConnection}) {
@@ -66,6 +67,13 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
 
   int get usedBytes => _usedBytes;
   double get currentSpeedKBps => _currentSpeedKBps;
+
+  // Display state only - an unreachable API never tears down a live tunnel.
+  bool get serverUnreachable => _consecutiveFailures >= _maxConsecutiveFailures;
+
+  // Why the last session ended, if the user did not end it. Cleared on connect.
+  String? _lastEndMessage;
+  String? get lastEndMessage => _lastEndMessage;
 
   String get formatted {
     final h = (_remainingSeconds ~/ 3600).toString().padLeft(2, '0');
@@ -124,16 +132,35 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     if (!hadActiveSession || _isDisconnecting) return;
 
     if (vpnConnection.status == VpnStatus.error) {
-      unawaited(_doDisconnect('VPN entered error state'));
+      unawaited(_doDisconnect(
+        'VPN entered error state',
+        endedMessage: 'The tunnel stopped. You are not protected.',
+      ));
       return;
     }
 
     if (vpnConnection.status == VpnStatus.disconnected) {
-      unawaited(_doDisconnect('VPN tunnel dropped'));
+      // The native deadline beats the 1 s tick, so expiry lands here, not in
+      // _tick. postAlert is false: the service already posted, and a
+      // notification-Disconnect tap is the user asking.
+      final deadline = _deadlineAt;
+      final expired = _hasSyncedOnce &&
+          deadline != null &&
+          DateTime.now().isAfter(
+            deadline.subtract(const Duration(seconds: 5)),
+          );
+      unawaited(_doDisconnect(
+        'VPN tunnel dropped',
+        endedMessage:
+            expired ? 'Your session ended. You are not protected.' : null,
+        postAlert: false,
+      ));
     }
   }
 
-  Future<void> start() async {
+  // resetSupportClaim is false when re-attaching to a session already held:
+  // the top-up is once per server session and this flag is what enforces it.
+  Future<void> start({bool resetSupportClaim = true}) async {
     _sessionEpoch++;
     _remainingSeconds = 0;
     _remainingAtLastSync = 0;
@@ -141,19 +168,22 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     _lastUsedBytes = 0;
     _sinceLastSuccessfulSync?.stop();
     _sinceLastSuccessfulSync = null;
+    _deadlineAt = null;
     _currentSpeedKBps = 0.0;
     _tickCount = 0;
     _hasSyncedOnce = false;
     _consecutiveFailures = 0;
-    _offlineSeconds = 0;
     _isDisconnecting = false;
     _appBackgrounded = false;
+    _lastEndMessage = null;
     NotificationService.reset();
 
-    _supportStateEpoch++;
-    _supportRewardClaimed = false;
-    _supportRewardStateLoaded = true;
-    unawaited(_persistSupportRewardState(false));
+    if (resetSupportClaim) {
+      _supportStateEpoch++;
+      _supportRewardClaimed = false;
+      _supportRewardStateLoaded = true;
+      unawaited(_persistSupportRewardState(false));
+    }
 
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), _tick);
@@ -169,16 +199,11 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
       _reconcileElapsedTime();
     }
 
-    if (_consecutiveFailures >= _maxConsecutiveFailures) {
-      _offlineSeconds++;
-      if (_offlineSeconds >= _maxOfflineSeconds) {
-        unawaited(_doDisconnect('Server unreachable'));
-        return;
-      }
-    }
-
     if (_hasSyncedOnce && _remainingSeconds <= 0) {
-      unawaited(_doDisconnect('Session expired'));
+      unawaited(_doDisconnect(
+        'Session expired',
+        endedMessage: 'Your session ended. You are not protected.',
+      ));
       return;
     }
 
@@ -216,15 +241,27 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> disconnect({String reason = 'User requested'}) async {
+    // Only here, not in _doDisconnect: this is the one path the user actually
+    // asked for. Unawaited so a slow or unreachable API never holds up the
+    // teardown.
+    unawaited(HivemindService.releaseSession());
     await _doDisconnect(reason);
   }
 
-  Future<void> _doDisconnect(String reason) async {
+  // endedMessage is what the UI shows; postAlert raises the notification.
+  // A user-requested disconnect passes neither.
+  Future<void> _doDisconnect(
+    String reason, {
+    String? endedMessage,
+    bool postAlert = true,
+  }) async {
     if (_isDisconnecting) return;
     _isDisconnecting = true;
     _sessionEpoch++;
     debugPrint('[Timer] Disconnecting: $reason');
 
+    _lastEndMessage = endedMessage;
+    _deadlineAt = null;
     _timer?.cancel();
     _timer = null;
     _currentSpeedKBps = 0.0;
@@ -237,6 +274,13 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
 
     await vpnConnection.disconnect();
+    // After the service is down, so the cancel is not swallowed by a still
+    // foreground notification. Without it a revoke leaves the countdown on
+    // screen, frozen, claiming a session that no longer protects anything.
+    await NotificationService.cancelTimer();
+    if (endedMessage != null && postAlert) {
+      unawaited(NotificationService.showDisconnectedAlert());
+    }
 
     _isDisconnecting = false;
     notifyListeners();
@@ -282,7 +326,11 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
           return;
         }
         if (!activeValue) {
-          await _doDisconnect('Server ended session');
+          await _doDisconnect(
+            'Server ended session',
+            endedMessage:
+                'The server ended your session. You are not protected.',
+          );
           return;
         }
 
@@ -298,6 +346,9 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
         final elapsedMs = _sinceLastSuccessfulSync?.elapsedMilliseconds;
         _remainingAtLastSync = expiresValue.toInt();
         _remainingSeconds = _remainingAtLastSync;
+        _deadlineAt = DateTime.now().add(
+          Duration(seconds: _remainingAtLastSync),
+        );
         _usedBytes = _readNonNegativeInt(data['used_bytes'], _usedBytes);
 
         final deltaBytes = _usedBytes - _lastUsedBytes;
@@ -313,7 +364,10 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
         _sinceLastSuccessfulSync = Stopwatch()..start();
 
         if (data['cap_exhausted'] == true) {
-          await _doDisconnect('Data cap reached');
+          await _doDisconnect(
+            'Data cap reached',
+            endedMessage: 'Data limit reached. You are not protected.',
+          );
           return;
         }
 
@@ -322,12 +376,15 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
           await vpnConnection.setNativeSessionDeadline(_remainingAtLastSync);
         } catch (e) {
           debugPrint('[Timer] Failed to arm native session deadline: $e');
-          await _doDisconnect('Native session deadline unavailable');
+          await _doDisconnect(
+            'Native session deadline unavailable',
+            endedMessage:
+                'Could not arm the session timer. You are not protected.',
+          );
           return;
         }
         if (epoch != _sessionEpoch || _isDisconnecting) return;
         _consecutiveFailures = 0;
-        _offlineSeconds = 0;
         _hasSyncedOnce = true;
         notifyListeners();
       } else {
@@ -364,6 +421,16 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
     final elapsed = clock.elapsed.inSeconds;
     _remainingSeconds =
         (_remainingAtLastSync - elapsed).clamp(0, 1 << 31).toInt();
+
+    // The Stopwatch over-reports after device suspend. Take the smaller of
+    // the two, never the wall clock alone - a backward clock must not extend.
+    final deadline = _deadlineAt;
+    if (deadline != null) {
+      final byWallClock = deadline.difference(DateTime.now()).inSeconds;
+      if (byWallClock < _remainingSeconds) {
+        _remainingSeconds = byWallClock.clamp(0, 1 << 31).toInt();
+      }
+    }
   }
 
   @override
