@@ -241,6 +241,10 @@ class SessionTimer extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> disconnect({String reason = 'User requested'}) async {
+    // Only here, not in _doDisconnect: this is the one path the user actually
+    // asked for. Unawaited so a slow or unreachable API never holds up the
+    // teardown.
+    unawaited(HivemindService.releaseSession());
     await _doDisconnect(reason);
   }
 

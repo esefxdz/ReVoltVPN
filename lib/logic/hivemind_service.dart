@@ -76,6 +76,71 @@ class HivemindService {
     }
   }
 
+  static Future<http.Response> controlPost(
+    Uri uri,
+    Map<String, dynamic> body, {
+    Duration timeout = const Duration(seconds: 5),
+  }) async {
+    final client = http.Client();
+    final request = http.Request('POST', uri)
+      ..headers['User-Agent'] = _ua
+      ..headers['Content-Type'] = 'application/json'
+      ..body = jsonEncode(body)
+      ..followRedirects = false;
+
+    Future<http.Response> send() async {
+      final streamed = await client.send(request);
+      final declaredLength = streamed.contentLength;
+      if (declaredLength != null && declaredLength > _maxControlResponseBytes) {
+        throw const FormatException('Control response is too large.');
+      }
+
+      final bytes = <int>[];
+      await for (final chunk in streamed.stream) {
+        if (bytes.length + chunk.length > _maxControlResponseBytes) {
+          throw const FormatException('Control response is too large.');
+        }
+        bytes.addAll(chunk);
+      }
+
+      return http.Response.bytes(bytes, streamed.statusCode,
+          headers: streamed.headers, request: request);
+    }
+
+    try {
+      return await send().timeout(
+        timeout,
+        onTimeout: () {
+          client.close();
+          throw TimeoutException('Control request timed out.', timeout);
+        },
+      );
+    } finally {
+      client.close();
+    }
+  }
+
+  // Hands the session back so the server can drop the VLESS client instead of
+  // leaving it provisioned until the window runs out.
+  //
+  // Only the user-initiated disconnect calls this. An expiry, a hard cap or a
+  // server-ended session is already gone server-side, and /session/stop takes
+  // nothing but a device_id as proof (hivemind/api.py notes this), so a
+  // transient client error must never be allowed to destroy a live session.
+  // Best effort throughout: the session expires on its own regardless.
+  static Future<void> releaseSession() async {
+    try {
+      final deviceId = await CryptoService.getDeviceId();
+      await controlPost(
+        _publicUrl('/session/stop'),
+        {'device_id': deviceId},
+        timeout: const Duration(seconds: 3),
+      );
+    } catch (_) {
+      // Nothing to recover: the server expires the session anyway.
+    }
+  }
+
   static void cancel() {
     _currentCallId++;
     _expectedNonce = null;
