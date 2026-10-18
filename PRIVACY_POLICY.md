@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Last updated:** September 2026
+**Last updated:** October 2026
 
 ReVoltVPN is a free VPN service built and operated by ReVolt Team.
 
@@ -12,7 +12,7 @@ When you first open the app, we show a brief summary of this policy before you c
 
 We collect the minimum required to operate the service:
 
-- A randomly generated device ID created on your phone. This is not linked to your identity in any way.
+- A randomly generated device ID created on your phone. It is stored on your device and reused between sessions, and it is not linked to your identity in any way.
 - Your connection duration and data usage for the current session, linked to your device ID. This is used solely to enforce the per-session quota (see below).
 
 ## What our server sees
@@ -27,14 +27,14 @@ Support ads (the "Support us" button) extend an active session by 30 minutes and
 
 ## Operational logs
 
-Server logs are written to the systemd journal (`journalctl -u hivemind`). These logs include truncated device IDs (first 8 characters only), session start/stop events, and error messages. Logs stay on the server and are accessible only to the server operator via local console; retention follows the server's systemd journal settings. We also maintain an aggregate total of all data ever transferred (in GB) for capacity planning — this counter is not tied to any individual device.
+Server logs are written to the system journal. These logs include truncated device IDs (first 8 characters only), session start/stop events, and error messages. Logs stay on the server and are accessible only to the server operator via local console; retention follows the server's journal settings. We also maintain an aggregate total of all data ever transferred (in GB) for capacity planning — this counter is not tied to any individual device.
 
 ## What we do not collect
 
 - We do not collect your name, email, or any personal information.
 - We do not log your internet traffic, browsing history, DNS queries, or destination IPs.
 - We do not inspect or store the content of your traffic.
-- We do not sell or share any data with third parties.
+- We do not sell your data. We do not share it with anyone, apart from what Google's ad SDK collects for ad delivery — see “Ads & Consent” below.
 
 ## Ads & Consent
 
